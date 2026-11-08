@@ -1,0 +1,50 @@
+# Run this ONCE (Actions tab > "Create Android signing key" > Run workflow).
+# It makes a permanent signing key for the Android app and offers it as a
+# download that only people with access to this private repository can see.
+# Follow the instructions in the downloaded file, then delete the download.
+name: Create Android signing key
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Generate key
+        run: |
+          set -e
+          mkdir out
+          PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-28)
+          keytool -genkeypair -keystore key.jks -storetype PKCS12 -alias lockbox \
+            -keyalg RSA -keysize 4096 -validity 36500 \
+            -storepass "$PASSWORD" -keypass "$PASSWORD" \
+            -dname "CN=Lockbox" >/dev/null 2>&1
+          base64 -w0 key.jks > out/ANDROID_KEYSTORE_BASE64.txt
+          printf '%s' "$PASSWORD" > out/ANDROID_KEY_PASSWORD.txt
+          cp key.jks out/lockbox-signing-key.jks
+          cat > out/README.txt <<'EOF'
+          LOCKBOX ANDROID SIGNING KEY - keep this private.
+
+          1. On GitHub open the Lockbox repository > Settings >
+             Secrets and variables > Actions > New repository secret.
+          2. Name: ANDROID_KEYSTORE_BASE64
+             Secret: the whole contents of ANDROID_KEYSTORE_BASE64.txt
+          3. New repository secret again.
+             Name: ANDROID_KEY_PASSWORD
+             Secret: the contents of ANDROID_KEY_PASSWORD.txt
+          4. Keep lockbox-signing-key.jks and the password somewhere safe
+             (e.g. a password manager). If they are ever lost, future
+             versions of the app can't be installed as updates.
+          5. Delete this download afterwards.
+          EOF
+          rm key.jks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lockbox-signing-key
+          path: out/
+          retention-days: 1
