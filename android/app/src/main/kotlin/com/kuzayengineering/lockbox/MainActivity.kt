@@ -1,5 +1,509 @@
 package com.kuzayengineering.lockbox
 
+import android.app.Activity
+import android.content.ContentValues
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.ParcelFileDescriptor
+import android.provider.DocumentsContract
+import android.provider.MediaStore
+import android.provider.OpenableColumns
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileInputStream
+import java.io.InputStream
+import androidx.media3.datasource.DataSourceInputStream
+import androidx.media3.datasource.DataSpec
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.max
 
-class MainActivity : FlutterActivity()
+class MainActivity : FlutterActivity() {
+
+    private var player: LockboxPlayer? = null
+    private val io = Executors.newFixedThreadPool(2)
+    private val main = Handler(Looper.getMainLooper())
+    private val pending = HashMap<Int, (Intent?) -> Unit>()
+    private val nextRequest = AtomicInteger(4000)
+
+    /** Files opened for import, by handle id. */
+    private class ImportHandle(val uri: Uri, val pfd: ParcelFileDescriptor?, val temp: File?, val path: String)
+    private val imports = HashMap<Int, ImportHandle>()
+    private val nextHandle = AtomicInteger(1)
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Block screenshots / screen recording / casting and hide content in
+        // the recent-apps switcher. Always on: nothing in Lockbox is shareable.
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+        val p = LockboxPlayer(applicationContext, messenger)
+        player = p
+        flutterEngine.platformViewsController.registry
+            .registerViewFactory("lockbox/video_view", PlayerViewFactory(p))
+        MethodChannel(messenger, "lockbox/native").setMethodCallHandler { call, result ->
+            try {
+                handle(call, result)
+            } catch (e: Exception) {
+                result.error("native", e.message, null)
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        player?.release()
+        imports.values.forEach { closeHandle(it, false) }
+        imports.clear()
+        super.onDestroy()
+    }
+
+    // ------------------------------------------------------------ helpers
+
+    private fun background(result: MethodChannel.Result, work: () -> Any?) {
+        io.execute {
+            try {
+                val value = work()
+                main.post { result.success(value) }
+            } catch (e: Exception) {
+                main.post { result.error("native", e.message, null) }
+            }
+        }
+    }
+
+    private fun launch(intent: Intent, onResult: (Intent?) -> Unit) {
+        val code = nextRequest.incrementAndGet()
+        pending[code] = onResult
+        @Suppress("DEPRECATION")
+        startActivityForResult(intent, code)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        val cb = pending.remove(requestCode)
+        if (cb != null) {
+            cb(if (resultCode == Activity.RESULT_OK) data else null)
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    private fun describe(uri: Uri): Map<String, Any?> {
+        var name: String? = null
+        var size: Long? = null
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+            if (c.moveToFirst()) {
+                val ni = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val si = c.getColumnIndex(OpenableColumns.SIZE)
+                if (ni >= 0) name = c.getString(ni)
+                if (si >= 0 && !c.isNull(si)) size = c.getLong(si)
+            }
+        }
+        return mapOf(
+            "uri" to uri.toString(),
+            "name" to (name ?: uri.lastPathSegment ?: "file"),
+            "size" to size,
+            "mime" to contentResolver.getType(uri),
+            "relativePath" to originalFolder(uri),
+        )
+    }
+
+    /**
+     * Works out which shared-storage folder a picked file lives in, e.g.
+     * "DCIM/Camera/", so it can be put back there when restored.
+     */
+    private fun originalFolder(uri: Uri): String? {
+        try {
+            if (DocumentsContract.isDocumentUri(this, uri) &&
+                uri.authority == "com.android.externalstorage.documents") {
+                // Document id looks like "primary:DCIM/Camera/IMG_1.jpg"
+                val id = DocumentsContract.getDocumentId(uri)
+                val rel = id.substringAfter(':', "")
+                val slash = rel.lastIndexOf('/')
+                return if (slash > 0) rel.substring(0, slash + 1) else ""
+            }
+            val mediaUri = try { MediaStore.getMediaUri(this, uri) } catch (_: Exception) { null } ?: uri
+            contentResolver.query(mediaUri, arrayOf(MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val i = c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
+                    if (i >= 0) return c.getString(i)
+                }
+            }
+        } catch (_: Exception) {}
+        return null
+    }
+
+    /**
+     * Puts a restored file back into shared storage through MediaStore, in
+     * [relativePath] (e.g. "DCIM/Camera/"). Falls back to the Download
+     * folder if Android doesn't allow that folder for this file type.
+     * Returns the folder actually used.
+     */
+    /**
+     * The bytes to write: either a plain file ("src") or a Lockbox encrypted
+     * file ("blob" + "key") that is decrypted on the fly, so no decrypted
+     * temporary copy is ever written.
+     */
+    @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+    private fun inputFor(call: MethodCall): () -> InputStream {
+        val blob = call.argument<String>("blob")
+        if (blob != null) {
+            val key = call.argument<ByteArray>("key")!!
+            return {
+                val file = File(blob)
+                DataSourceInputStream(EncryptedBlobDataSource(file, key), DataSpec(Uri.fromFile(file)))
+            }
+        }
+        val src = call.argument<String>("src")!!
+        return { FileInputStream(src) }
+    }
+
+    private fun restoreToMediaStore(input: () -> InputStream, name: String, mime: String, kind: String, relativePath: String): String {
+        val volume = MediaStore.VOLUME_EXTERNAL_PRIMARY
+        val primary = when (kind) {
+            "photo" -> MediaStore.Images.Media.getContentUri(volume)
+            "video" -> MediaStore.Video.Media.getContentUri(volume)
+            "audio" -> MediaStore.Audio.Media.getContentUri(volume)
+            else -> MediaStore.Downloads.getContentUri(volume)
+        }
+        val attempts = listOf(
+            primary to relativePath,
+            MediaStore.Downloads.getContentUri(volume) to relativePath,
+            MediaStore.Downloads.getContentUri(volume) to "Download/Lockbox/",
+        )
+        var lastError: Exception? = null
+        for ((collection, rel) in attempts) {
+            var item: Uri? = null
+            try {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                    put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, rel)
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                item = contentResolver.insert(collection, values) ?: continue
+                contentResolver.openOutputStream(item)!!.use { out ->
+                    input().use { it.copyTo(out, 1 shl 20) }
+                }
+                contentResolver.update(item, ContentValues().apply {
+                    put(MediaStore.MediaColumns.IS_PENDING, 0)
+                }, null, null)
+                return rel
+            } catch (e: Exception) {
+                lastError = e
+                item?.let { try { contentResolver.delete(it, null, null) } catch (_: Exception) {} }
+            }
+        }
+        throw lastError ?: IllegalStateException("Could not restore $name")
+    }
+
+    private fun closeHandle(h: ImportHandle, deleteOriginal: Boolean): Boolean {
+        try { h.pfd?.close() } catch (_: Exception) {}
+        h.temp?.delete()
+        if (!deleteOriginal) return false
+        return try {
+            DocumentsContract.deleteDocument(contentResolver, h.uri)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun jpeg(bitmap: Bitmap, quality: Int = 82): ByteArray {
+        val out = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        return out.toByteArray()
+    }
+
+    private fun scaled(b: Bitmap, maxSide: Int): Bitmap {
+        val s = maxSide.toFloat() / max(b.width, b.height)
+        if (s >= 1f) return b
+        return Bitmap.createScaledBitmap(b, (b.width * s).toInt().coerceAtLeast(1), (b.height * s).toInt().coerceAtLeast(1), true)
+    }
+
+    @androidx.annotation.RequiresApi(28)
+    private fun decodeImageSource(source: ImageDecoder.Source, maxSide: Int): Bitmap =
+        ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+            val w = info.size.width
+            val h = info.size.height
+            val s = maxSide.toFloat() / max(w, h)
+            if (s < 1f) decoder.setTargetSize((w * s).toInt().coerceAtLeast(1), (h * s).toInt().coerceAtLeast(1))
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        }
+
+    // ------------------------------------------------------------ methods
+
+    private fun handle(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            // "Save frame": full-resolution still from an encrypted video.
+            "grabFrame" -> {
+                val blob = call.argument<String>("blob")!!
+                val key = call.argument<ByteArray>("key")!!
+                val positionMs = (call.argument<Number>("positionMs") ?: 0).toLong()
+                background(result) {
+                    val ds = EncryptedMediaDataSource(File(blob), key)
+                    val r = MediaMetadataRetriever()
+                    try {
+                        r.setDataSource(ds)
+                        val bmp = r.getFrameAtTime(positionMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+                            ?: throw IllegalStateException("No frame at that position")
+                        jpeg(bmp, 95)
+                    } finally {
+                        try { r.release() } catch (_: Exception) {}
+                        ds.close()
+                    }
+                }
+            }
+
+            // Opens the system picker for photos, videos and audio.
+            "pickMedia" -> {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*", "audio/*"))
+                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                }
+                launch(intent) { data ->
+                    if (data == null) { result.success(emptyList<Any>()); return@launch }
+                    val uris = mutableListOf<Uri>()
+                    val clip = data.clipData
+                    if (clip != null) {
+                        for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri)
+                    } else {
+                        data.data?.let { uris.add(it) }
+                    }
+                    background(result) { uris.map { describe(it) } }
+                }
+            }
+
+            "pickFile" -> {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                }
+                launch(intent) { data ->
+                    val uri = data?.data
+                    if (uri == null) result.success(null) else background(result) { describe(uri) }
+                }
+            }
+
+            // Makes a picked file readable by Dart as a normal file path.
+            "openImport" -> {
+                val uri = Uri.parse(call.argument<String>("uri")!!)
+                background(result) {
+                    var pfd: ParcelFileDescriptor? = null
+                    try {
+                        pfd = contentResolver.openFileDescriptor(uri, "r")
+                    } catch (_: Exception) {}
+                    val handle: ImportHandle = if (pfd != null && pfd.statSize >= 0) {
+                        ImportHandle(uri, pfd, null, "/proc/self/fd/${pfd.fd}")
+                    } else {
+                        try { pfd?.close() } catch (_: Exception) {}
+                        // Not a seekable file (e.g. a cloud provider): copy it.
+                        val tmp = File.createTempFile("import", ".bin", cacheDir)
+                        contentResolver.openInputStream(uri)!!.use { input ->
+                            tmp.outputStream().use { input.copyTo(it, 1 shl 20) }
+                        }
+                        ImportHandle(uri, null, tmp, tmp.absolutePath)
+                    }
+                    val id = nextHandle.incrementAndGet()
+                    synchronized(imports) { imports[id] = handle }
+                    mapOf("handle" to id, "path" to handle.path)
+                }
+            }
+
+            "closeImport" -> {
+                val id = call.argument<Int>("handle")!!
+                val delete = call.argument<Boolean>("deleteOriginal") == true
+                val h = synchronized(imports) { imports.remove(id) }
+                if (h == null) result.success(false) else background(result) { closeHandle(h, delete) }
+            }
+
+            // Reads metadata and makes a thumbnail with Android's own decoders.
+            "probe" -> {
+                val id = call.argument<Int>("handle")!!
+                val kind = call.argument<String>("kind")!!
+                val thumbSize = call.argument<Int>("thumbSize") ?: 512
+                val h = synchronized(imports) { imports[id] }
+                if (h == null) { result.error("native", "unknown handle", null); return }
+                background(result) { probe(h, kind, thumbSize) }
+            }
+
+            // Converts image bytes Flutter can't decode (e.g. some HEIC) to JPEG.
+            "toJpeg" -> {
+                val bytes = call.argument<ByteArray>("bytes")!!
+                val maxSide = call.argument<Int>("maxSide") ?: 4096
+                background(result) {
+                    val bmp = if (Build.VERSION.SDK_INT >= 28) {
+                        decodeImageSource(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes)), maxSide)
+                    } else {
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { scaled(it, maxSide) }
+                    }
+                    bmp?.let { jpeg(it, 92) }
+                }
+            }
+
+            // Lets the user pick a folder, then writes decrypted exports there.
+            "pickFolder" -> {
+                val persist = call.argument<Boolean>("persist") == true
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                }
+                launch(intent) { data ->
+                    val uri = data?.data
+                    if (uri != null && persist) {
+                        try {
+                            contentResolver.takePersistableUriPermission(uri,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                        } catch (_: Exception) {}
+                    }
+                    result.success(uri?.toString())
+                }
+            }
+
+            "restoreToMediaStore" -> {
+                val input = inputFor(call)
+                val name = call.argument<String>("name")!!
+                val mime = call.argument<String>("mime") ?: "application/octet-stream"
+                val kind = call.argument<String>("kind") ?: "other"
+                val rel = call.argument<String>("relativePath")!!
+                background(result) { restoreToMediaStore(input, name, mime, kind, rel) }
+            }
+
+            "writeToFolder" -> {
+                val tree = Uri.parse(call.argument<String>("tree")!!)
+                val input = inputFor(call)
+                val name = call.argument<String>("name")!!
+                val mime = call.argument<String>("mime") ?: "application/octet-stream"
+                background(result) {
+                    val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+                    val doc = DocumentsContract.createDocument(contentResolver, parent, mime, name)
+                        ?: throw IllegalStateException("Could not create $name")
+                    contentResolver.openOutputStream(doc)!!.use { out ->
+                        input().use { it.copyTo(out, 1 shl 20) }
+                    }
+                    true
+                }
+            }
+
+            // "Save as" dialog that returns a writable path (used for backups,
+            // so the backup is written straight to its destination).
+            "createForWrite" -> {
+                val name = call.argument<String>("name")!!
+                val mime = call.argument<String>("mime") ?: "application/octet-stream"
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = mime
+                    putExtra(Intent.EXTRA_TITLE, name)
+                }
+                launch(intent) { data ->
+                    val uri = data?.data
+                    if (uri == null) { result.success(null); return@launch }
+                    background(result) {
+                        val pfd = contentResolver.openFileDescriptor(uri, "wt")
+                            ?: throw IllegalStateException("Cannot write there")
+                        val id = nextHandle.incrementAndGet()
+                        synchronized(imports) { imports[id] = ImportHandle(uri, pfd, null, "/proc/self/fd/${pfd.fd}") }
+                        mapOf("handle" to id, "path" to "/proc/self/fd/${pfd.fd}")
+                    }
+                }
+            }
+
+            // "Save as" dialog for a single file.
+            "saveAs" -> {
+                val src = call.argument<String>("src")!!
+                val name = call.argument<String>("name")!!
+                val mime = call.argument<String>("mime") ?: "application/octet-stream"
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = mime
+                    putExtra(Intent.EXTRA_TITLE, name)
+                }
+                launch(intent) { data ->
+                    val uri = data?.data
+                    if (uri == null) { result.success(false); return@launch }
+                    background(result) {
+                        contentResolver.openOutputStream(uri, "wt")!!.use { out ->
+                            FileInputStream(src).use { it.copyTo(out, 1 shl 20) }
+                        }
+                        true
+                    }
+                }
+            }
+
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun probe(h: ImportHandle, kind: String, thumbSize: Int): Map<String, Any?> {
+        val out = HashMap<String, Any?>()
+        if (kind == "photo") {
+            try {
+                val bmp = if (Build.VERSION.SDK_INT >= 28) {
+                    decodeImageSource(ImageDecoder.createSource(contentResolver, h.uri), thumbSize)
+                } else {
+                    val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+                    contentResolver.openInputStream(h.uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+                        ?.let { scaled(it, thumbSize) }
+                }
+                if (bmp != null) out["thumbnail"] = jpeg(bmp)
+            } catch (_: Exception) {}
+            return out
+        }
+        val r = MediaMetadataRetriever()
+        try {
+            if (h.pfd != null) r.setDataSource(h.pfd.fileDescriptor) else r.setDataSource(h.path)
+            fun key(k: Int): String? = try { r.extractMetadata(k) } catch (_: Exception) { null }
+            out["durationMs"] = key(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            out["date"] = key(MediaMetadataRetriever.METADATA_KEY_DATE)
+            out["mime"] = key(MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
+            if (kind == "video") {
+                out["width"] = key(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()
+                out["height"] = key(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
+                out["rotation"] = key(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull()
+                out["captureFps"] = key(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toDoubleOrNull()
+                if (Build.VERSION.SDK_INT >= 28) {
+                    out["frameCount"] = key(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toLongOrNull()
+                }
+                if (Build.VERSION.SDK_INT >= 30) {
+                    // MediaFormat.COLOR_TRANSFER_*: 6 = PQ (HDR10), 7 = HLG
+                    out["colorTransfer"] = key(MediaMetadataRetriever.METADATA_KEY_COLOR_TRANSFER)?.toIntOrNull()
+                }
+                val frame = if (Build.VERSION.SDK_INT >= 27) {
+                    r.getScaledFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, thumbSize, thumbSize)
+                } else {
+                    r.getFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { scaled(it, thumbSize) }
+                } ?: r.frameAtTime?.let { scaled(it, thumbSize) }
+                if (frame != null) out["thumbnail"] = jpeg(frame)
+            } else {
+                out["title"] = key(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                out["artist"] = key(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                r.embeddedPicture?.let { art ->
+                    BitmapFactory.decodeByteArray(art, 0, art.size)?.let { out["thumbnail"] = jpeg(scaled(it, thumbSize)) }
+                }
+            }
+        } catch (_: Exception) {
+        } finally {
+            try { r.release() } catch (_: Exception) {}
+        }
+        return out
+    }
+}

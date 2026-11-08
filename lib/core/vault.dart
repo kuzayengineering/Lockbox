@@ -31,6 +31,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import 'auto_tag.dart';
 import 'blob_format.dart';
 import 'crypto.dart';
 import 'models.dart';
@@ -58,8 +59,8 @@ class Vault {
     required AesKey masterKey,
     required Uint8List keyHeader,
     required this.data,
-  })  : _masterKey = masterKey,
-        _keyHeader = keyHeader;
+  })  : _masterKey = masterKey, // ignore: prefer_initializing_formals
+        _keyHeader = keyHeader; // ignore: prefer_initializing_formals
 
   /// Folder containing the vault.
   final String directory;
@@ -316,6 +317,22 @@ class Vault {
     return id;
   }
 
+  /// Encrypts bytes held in memory (e.g. a saved video frame) as an original.
+  Future<String> storeBytes(Uint8List bytes) async {
+    final id = randomId();
+    await encryptBytesToBlob(
+        bytes: bytes, destPath: blobPath(id), masterKey: masterKey);
+    return id;
+  }
+
+  /// The top-level folder called [name], created if missing.
+  Folder topFolderNamed(String name) {
+    for (final f in data.folders) {
+      if (f.parentId == null && f.name == name) return f;
+    }
+    return createFolder(name);
+  }
+
   Future<String> storeThumbnail(Uint8List bytes) async {
     final id = randomId();
     await encryptBytesToBlob(
@@ -428,6 +445,27 @@ class Vault {
     final t = Tag(id: randomId(8), name: name, color: color ?? 0xFF5C6BC0);
     data.tags.add(t);
     return t;
+  }
+
+  /// Finds a tag by name (ignoring upper/lower case) or creates it.
+  Tag tagNamed(String name) {
+    final lower = name.toLowerCase();
+    for (final t in data.tags) {
+      if (t.name.toLowerCase() == lower) return t;
+    }
+    return createTag(name, color: _tagPalette[data.tags.length % _tagPalette.length]);
+  }
+
+  static const _tagPalette = [
+    0xFF5C6BC0, 0xFF26A69A, 0xFFEF5350, 0xFFAB47BC, 0xFFFFA726,
+    0xFF42A5F5, 0xFF66BB6A, 0xFFEC407A, 0xFF8D6E63, 0xFF78909C,
+  ];
+
+  /// Tags an item with the words of its file name (see auto_tag.dart).
+  void autoTag(MediaItem item) {
+    for (final w in tagWordsFromFileName(item.name)) {
+      item.tagIds.add(tagNamed(w).id);
+    }
   }
 
   void deleteTag(String tagId) {

@@ -6,6 +6,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lockbox/core/auto_tag.dart';
 import 'package:lockbox/core/backup.dart';
 import 'package:lockbox/core/blob_format.dart';
 import 'package:lockbox/core/crypto.dart';
@@ -372,10 +373,52 @@ void main() {
       expect(info.createdAt!.toUtc(), created);
     });
 
+    test('real HEVC files: HDR read from the video stream', () async {
+      final hlg = (await probeMp4('test/fixtures/hlg_60fps_no_colr.mp4'))!;
+      expect(hlg.hdr, HdrFormat.hlg);
+      expect(hlg.fps, 60);
+      expect((hlg.width, hlg.height), (320, 180));
+      final pq = (await probeMp4('test/fixtures/pq_30fps_no_colr.mp4'))!;
+      expect(pq.hdr, HdrFormat.hdr10);
+      expect(pq.fps, 30);
+      final sdr = (await probeMp4('test/fixtures/sdr_hevc.mp4'))!;
+      expect(sdr.hdr, HdrFormat.none);
+    });
+
     test('non-mp4 returns null', () async {
       final f = File(p.join(tmp.path, 'x.jpg'))
         ..writeAsBytesSync([0xFF, 0xD8, 0xFF, 0xE0, ...List.filled(100, 1)]);
       expect(await probeMp4(f.path), isNull);
+    });
+  });
+
+  group('auto tags', () {
+    test('words from file names, numbers ignored', () {
+      expect(tagWordsFromFileName('Beach trip with Sam 2024 (2).mp4'),
+          ['Beach', 'trip', 'with', 'Sam']);
+      expect(tagWordsFromFileName('IMG_20240101_123456.jpg'),
+          ['IMG_20240101_123456']);
+      expect(tagWordsFromFileName('20240101 123456.jpg'), isEmpty);
+      expect(tagWordsFromFileName('Dog  dog - DOG, park.heic'), ['Dog', 'park']);
+      expect(tagWordsFromFileName('4K HDR clip.mov'), ['4K', 'HDR', 'clip']);
+    });
+
+    test('reuses existing tags regardless of case', () async {
+      final v = await Vault.create(p.join(tmp.path, 'v'), 'pw',
+          params: KdfParams.testing);
+      final existing = v.createTag('beach');
+      final item = MediaItem(
+          id: 'a',
+          blobId: 'a',
+          name: 'Beach sunset 2023.jpg',
+          kind: MediaKind.photo,
+          mimeType: 'image/jpeg',
+          sizeBytes: 1,
+          addedAt: DateTime.now());
+      v.autoTag(item);
+      expect(v.data.tags.map((t) => t.name), ['beach', 'sunset']);
+      expect(item.tagIds.contains(existing.id), isTrue);
+      expect(item.tagIds.length, 2);
     });
   });
 

@@ -281,8 +281,14 @@ void _parseVisualChildren(String codec, Uint8List d, Mp4Info info) {
       codec == 'dvav') {
     info.hdr = HdrFormat.dolbyVision;
   }
+  int? vuiTransfer;
   for (final b in _children(d)) {
-    if (b.type == 'dvcC' || b.type == 'dvvC' || b.type == 'dvwC') {
+    if (b.type == 'hvcC') {
+      vuiTransfer ??= hevcTransferFromHvcc(b.data);
+    } else if (b.type == 'vpcC' && b.data.length >= 9) {
+      // version+flags(4) profile level bitdepth/chroma primaries TRANSFER
+      vuiTransfer ??= b.data[7];
+    } else if (b.type == 'dvcC' || b.type == 'dvvC' || b.type == 'dvwC') {
       info.hdr = HdrFormat.dolbyVision;
     } else if (b.type == 'colr' && b.data.length >= 10) {
       final kind = String.fromCharCodes(b.data.sublist(0, 4));
@@ -295,4 +301,198 @@ void _parseVisualChildren(String codec, Uint8List d, Mp4Info info) {
       }
     }
   }
+  // Container didn't say; use what the video stream itself signals.
+  if (info.hdr == HdrFormat.none) {
+    if (vuiTransfer == 18) info.hdr = HdrFormat.hlg;
+    if (vuiTransfer == 16) info.hdr = HdrFormat.hdr10;
+  }
+}
+
+// ------------------------------------------------- HEVC SPS colour info
+
+/// Reads transfer_characteristics (16 = PQ/HDR10, 18 = HLG) from the
+/// sequence parameter set stored in an `hvcC` box. Null if absent.
+int? hevcTransferFromHvcc(Uint8List d) {
+  try {
+    if (d.length < 23) return null;
+    var pos = 22;
+    final arrays = d[pos++];
+    for (var a = 0; a < arrays; a++) {
+      final type = d[pos] & 0x3F;
+      final n = (d[pos + 1] << 8) | d[pos + 2];
+      pos += 3;
+      for (var k = 0; k < n; k++) {
+        final len = (d[pos] << 8) | d[pos + 1];
+        pos += 2;
+        if (type == 33 && len > 2) {
+          return _spsTransfer(_unescape(Uint8List.sublistView(d, pos + 2, pos + len)));
+        }
+        pos += len;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// Removes emulation-prevention bytes (00 00 03 -> 00 00).
+Uint8List _unescape(Uint8List b) {
+  final out = BytesBuilder(copy: false);
+  var zeros = 0;
+  for (final x in b) {
+    if (zeros >= 2 && x == 3) {
+      zeros = 0;
+      continue;
+    }
+    out.addByte(x);
+    zeros = x == 0 ? zeros + 1 : 0;
+  }
+  return out.takeBytes();
+}
+
+class _Bits {
+  _Bits(this.b);
+  final Uint8List b;
+  int p = 0;
+  int bit() {
+    final v = (b[p >> 3] >> (7 - (p & 7))) & 1;
+    p++;
+    return v;
+  }
+
+  int bits(int n) {
+    var v = 0;
+    for (var i = 0; i < n; i++) {
+      v = (v << 1) | bit();
+    }
+    return v;
+  }
+
+  void skip(int n) => p += n;
+
+  int ue() {
+    var zeros = 0;
+    while (bit() == 0) {
+      if (++zeros > 31) throw const FormatException('bad exp-golomb');
+    }
+    return (1 << zeros) - 1 + bits(zeros);
+  }
+
+  int se() {
+    final k = ue();
+    return k.isOdd ? (k + 1) >> 1 : -(k >> 1);
+  }
+}
+
+int? _spsTransfer(Uint8List sps) {
+  final r = _Bits(sps);
+  r.skip(4); // sps_video_parameter_set_id
+  final maxSubLayersMinus1 = r.bits(3);
+  r.skip(1);
+  // profile_tier_level
+  r.skip(96);
+  final subProfile = <bool>[], subLevel = <bool>[];
+  for (var i = 0; i < maxSubLayersMinus1; i++) {
+    subProfile.add(r.bit() == 1);
+    subLevel.add(r.bit() == 1);
+  }
+  if (maxSubLayersMinus1 > 0) {
+    for (var i = maxSubLayersMinus1; i < 8; i++) {
+      r.skip(2);
+    }
+  }
+  for (var i = 0; i < maxSubLayersMinus1; i++) {
+    if (subProfile[i]) r.skip(88);
+    if (subLevel[i]) r.skip(8);
+  }
+  r.ue(); // sps_seq_parameter_set_id
+  final chroma = r.ue();
+  if (chroma == 3) r.skip(1);
+  r.ue(); // width
+  r.ue(); // height
+  if (r.bit() == 1) {
+    r.ue();
+    r.ue();
+    r.ue();
+    r.ue();
+  }
+  r.ue(); // bit_depth_luma
+  r.ue(); // bit_depth_chroma
+  final log2MaxPocLsb = r.ue() + 4;
+  final subLayerOrdering = r.bit() == 1;
+  for (var i = subLayerOrdering ? 0 : maxSubLayersMinus1; i <= maxSubLayersMinus1; i++) {
+    r.ue();
+    r.ue();
+    r.ue();
+  }
+  for (var i = 0; i < 6; i++) {
+    r.ue(); // block / transform sizes, hierarchy depths
+  }
+  if (r.bit() == 1) {
+    // scaling_list_enabled
+    if (r.bit() == 1) {
+      for (var sizeId = 0; sizeId < 4; sizeId++) {
+        for (var m = 0; m < 6; m += sizeId == 3 ? 3 : 1) {
+          if (r.bit() == 0) {
+            r.ue();
+          } else {
+            final coefNum = 64 < (1 << (4 + (sizeId << 1))) ? 64 : (1 << (4 + (sizeId << 1)));
+            if (sizeId > 1) r.se();
+            for (var i = 0; i < coefNum; i++) {
+              r.se();
+            }
+          }
+        }
+      }
+    }
+  }
+  r.skip(2); // amp, sao
+  if (r.bit() == 1) {
+    // pcm
+    r.skip(8);
+    r.ue();
+    r.ue();
+    r.skip(1);
+  }
+  final numSets = r.ue();
+  final numDeltaPocs = <int>[];
+  for (var idx = 0; idx < numSets; idx++) {
+    var inter = false;
+    if (idx != 0) inter = r.bit() == 1;
+    if (inter) {
+      r.skip(1);
+      r.ue();
+      var count = 0;
+      for (var j = 0; j <= numDeltaPocs[idx - 1]; j++) {
+        final used = r.bit() == 1;
+        final useDelta = used ? true : r.bit() == 1;
+        if (useDelta) count++;
+      }
+      numDeltaPocs.add(count);
+    } else {
+      final neg = r.ue(), posN = r.ue();
+      for (var i = 0; i < neg + posN; i++) {
+        r.ue();
+        r.skip(1);
+      }
+      numDeltaPocs.add(neg + posN);
+    }
+  }
+  if (r.bit() == 1) {
+    // long_term_ref_pics_present
+    final n = r.ue();
+    for (var i = 0; i < n; i++) {
+      r.skip(log2MaxPocLsb + 1);
+    }
+  }
+  r.skip(2); // temporal mvp, strong intra smoothing
+  if (r.bit() == 0) return null; // no VUI
+  if (r.bit() == 1) {
+    if (r.bits(8) == 255) r.skip(32);
+  }
+  if (r.bit() == 1) r.skip(1); // overscan
+  if (r.bit() == 0) return null; // no video_signal_type
+  r.skip(4); // video_format, full_range
+  if (r.bit() == 0) return null; // no colour description
+  r.skip(8); // primaries
+  return r.bits(8);
 }

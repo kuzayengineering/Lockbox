@@ -39,6 +39,10 @@ Future<void> writeBackup({
   required List<String> relativePaths,
   required String destPath,
   void Function(int done, int total)? onProgress,
+
+  /// false = write straight into [destPath] (needed for Android
+  /// "/proc/self/fd" destinations, which can't be renamed).
+  bool atomic = true,
 }) async {
   final files = <String, File>{};
   var total = 0;
@@ -49,7 +53,7 @@ Future<void> writeBackup({
     files[norm] = f;
     total += f.lengthSync();
   }
-  final tmp = '$destPath.part';
+  final tmp = atomic ? '$destPath.part' : destPath;
   final sink = File(tmp).openWrite();
   var done = 0;
   try {
@@ -78,12 +82,15 @@ Future<void> writeBackup({
     await sink.flush();
   } catch (_) {
     await sink.close();
-    try {
-      await File(tmp).delete();
-    } catch (_) {}
+    if (atomic) {
+      try {
+        await File(tmp).delete();
+      } catch (_) {}
+    }
     rethrow;
   }
   await sink.close();
+  if (!atomic) return;
   final dest = File(destPath);
   if (dest.existsSync()) await dest.delete();
   await File(tmp).rename(destPath);

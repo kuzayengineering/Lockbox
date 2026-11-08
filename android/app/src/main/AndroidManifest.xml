@@ -1,6 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Lockbox deliberately has NO internet permission: it cannot send your
+         files anywhere. Debug builds get one automatically for development. -->
     <application
-        android:label="lockbox"
+        android:label="Lockbox"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

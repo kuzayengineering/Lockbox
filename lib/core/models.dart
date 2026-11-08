@@ -39,6 +39,7 @@ class MediaItem {
     Set<String>? tagIds,
     this.favorite = false,
     this.note,
+    this.originalLocation,
   }) : tagIds = tagIds ?? <String>{};
 
   final String id;
@@ -74,6 +75,11 @@ class MediaItem {
   bool favorite;
   String? note;
 
+  /// Where the file was before it was added, so it can be restored there.
+  /// Android: shared-storage folder such as "DCIM/Camera/".
+  /// Windows: the full folder path.
+  String? originalLocation;
+
   /// Media date used for "date taken" sorting: falls back to date added.
   DateTime get mediaDate => createdAt ?? addedAt;
 
@@ -107,6 +113,7 @@ class MediaItem {
         if (tagIds.isNotEmpty) 'tags': tagIds.toList(),
         if (favorite) 'fav': true,
         if (note != null) 'note': note,
+        if (originalLocation != null) 'orig': originalLocation,
       };
 
   factory MediaItem.fromJson(Map<String, dynamic> j) => MediaItem(
@@ -137,6 +144,7 @@ class MediaItem {
         tagIds: {...?(j['tags'] as List?)?.cast<String>()},
         favorite: j['fav'] == true,
         note: j['note'] as String?,
+        originalLocation: j['orig'] as String?,
       );
 }
 
@@ -178,6 +186,11 @@ class VaultSettings {
     this.gridColumns = 4,
     this.loopVideos = false,
     this.muteByDefault = false,
+    this.restoreFolder,
+    this.restoreFolderLabel,
+    this.deleteOriginalsOnImport = true,
+    this.keepCopyOnRestore = false,
+    this.autoTagFromNames = true,
   });
 
   /// How long the app may be in the background before it locks.
@@ -187,11 +200,31 @@ class VaultSettings {
   bool loopVideos;
   bool muteByDefault;
 
+  /// Default place restored files go (Android: folder access handle chosen
+  /// in Settings; Windows: folder path). Null = Pictures/Movies/Music
+  /// "Lockbox" folders.
+  String? restoreFolder;
+  String? restoreFolderLabel;
+
+  /// "Move" files into Lockbox (delete the unprotected originals).
+  bool deleteOriginalsOnImport;
+
+  /// When restoring, keep the file in Lockbox too.
+  bool keepCopyOnRestore;
+
+  /// Add tags from the words in a file's name when it is imported.
+  bool autoTagFromNames;
+
   Map<String, dynamic> toJson() => {
         'autoLock': autoLockSeconds,
         'cols': gridColumns,
         'loop': loopVideos,
         'mute': muteByDefault,
+        if (restoreFolder != null) 'restoreDir': restoreFolder,
+        if (restoreFolderLabel != null) 'restoreDirLabel': restoreFolderLabel,
+        'delOrig': deleteOriginalsOnImport,
+        'keepOnRestore': keepCopyOnRestore,
+        'autoTag': autoTagFromNames,
       };
 
   factory VaultSettings.fromJson(Map<String, dynamic>? j) => VaultSettings(
@@ -199,6 +232,11 @@ class VaultSettings {
         gridColumns: (j?['cols'] as int?) ?? 4,
         loopVideos: (j?['loop'] as bool?) ?? false,
         muteByDefault: (j?['mute'] as bool?) ?? false,
+        restoreFolder: j?['restoreDir'] as String?,
+        restoreFolderLabel: j?['restoreDirLabel'] as String?,
+        deleteOriginalsOnImport: (j?['delOrig'] as bool?) ?? true,
+        keepCopyOnRestore: (j?['keepOnRestore'] as bool?) ?? false,
+        autoTagFromNames: (j?['autoTag'] as bool?) ?? true,
       );
 }
 

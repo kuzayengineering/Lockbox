@@ -27,6 +27,13 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  // Lockbox content must never appear in screenshots, screen recordings or
+  // screen sharing. WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+) hides the
+  // window from capture; older Windows falls back to showing it black.
+  if (!SetWindowDisplayAffinity(GetHandle(), 0x00000011 /* WDA_EXCLUDEFROMCAPTURE */)) {
+    SetWindowDisplayAffinity(GetHandle(), WDA_MONITOR);
+  }
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });

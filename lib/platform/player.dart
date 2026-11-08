@@ -1,0 +1,342 @@
+// One video/audio player interface with two engines:
+//  * Android: ExoPlayer (Media3) in a native SurfaceView -> true HDR10/HLG/
+//    Dolby Vision output and full 60 fps, decrypting inside the player.
+//  * Windows: libmpv (media_kit) fed by the private loopback MediaServer.
+
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:media_kit/media_kit.dart' as mk;
+import 'package:media_kit_video/media_kit_video.dart' as mkv;
+
+import '../core/media_server.dart';
+import '../core/models.dart';
+import '../core/vault.dart';
+
+@immutable
+class PlaybackState {
+  const PlaybackState({
+    this.position = Duration.zero,
+    this.duration = Duration.zero,
+    this.buffered = Duration.zero,
+    this.playing = false,
+    this.buffering = false,
+    this.ended = false,
+    this.width = 0,
+    this.height = 0,
+    this.volume = 1,
+    this.speed = 1,
+    this.error,
+  });
+
+  final Duration position;
+  final Duration duration;
+  final Duration buffered;
+  final bool playing;
+  final bool buffering;
+  final bool ended;
+  final int width;
+  final int height;
+  final double volume; // 0..1
+  final double speed;
+  final String? error;
+
+  PlaybackState copyWith({
+    Duration? position,
+    Duration? duration,
+    Duration? buffered,
+    bool? playing,
+    bool? buffering,
+    bool? ended,
+    int? width,
+    int? height,
+    double? volume,
+    double? speed,
+    String? error,
+  }) =>
+      PlaybackState(
+        position: position ?? this.position,
+        duration: duration ?? this.duration,
+        buffered: buffered ?? this.buffered,
+        playing: playing ?? this.playing,
+        buffering: buffering ?? this.buffering,
+        ended: ended ?? this.ended,
+        width: width ?? this.width,
+        height: height ?? this.height,
+        volume: volume ?? this.volume,
+        speed: speed ?? this.speed,
+        error: error ?? this.error,
+      );
+}
+
+abstract class MediaPlayer {
+  static MediaPlayer create(Vault vault, {MediaServer? server}) {
+    if (Platform.isAndroid) return _AndroidPlayer(vault);
+    return _MpvPlayer(server!);
+  }
+
+  ValueListenable<PlaybackState> get state;
+  Future<void> open(MediaItem item,
+      {bool autoplay = true, bool loop = false, bool muted = false});
+  Future<void> play();
+  Future<void> pause();
+  Future<void> seek(Duration to);
+  Future<void> setSpeed(double speed);
+  Future<void> setVolume(double volume);
+  Future<void> setLooping(bool loop);
+  Future<void> stop();
+  Future<void> dispose();
+
+  /// The video picture. Only one should be on screen at a time.
+  Widget buildView();
+
+  /// JPEG of the video frame at [position] (the paused frame).
+  Future<Uint8List?> captureFrame(MediaItem item, Duration position);
+
+  Future<void> togglePlay() =>
+      state.value.playing ? pause() : play();
+}
+
+// ---------------------------------------------------------------- Android
+
+class _AndroidPlayer extends MediaPlayer {
+  _AndroidPlayer(this._vault) {
+    _sub = const EventChannel('lockbox/player/events')
+        .receiveBroadcastStream()
+        .listen(_onEvent, onError: (_) {});
+  }
+
+  static const _ch = MethodChannel('lockbox/player');
+  final Vault _vault;
+  final _state = ValueNotifier(const PlaybackState());
+  StreamSubscription? _sub;
+
+  @override
+  ValueListenable<PlaybackState> get state => _state;
+
+  void _onEvent(dynamic e) {
+    if (e is! Map) return;
+    Duration ms(Object? v) => Duration(milliseconds: (v as num?)?.toInt() ?? 0);
+    _state.value = PlaybackState(
+      position: ms(e['position']),
+      duration: ms(e['duration']),
+      buffered: ms(e['buffered']),
+      playing: e['playing'] == true,
+      buffering: e['buffering'] == true,
+      ended: e['ended'] == true,
+      width: (e['width'] as num?)?.toInt() ?? 0,
+      height: (e['height'] as num?)?.toInt() ?? 0,
+      volume: (e['volume'] as num?)?.toDouble() ?? 1,
+      speed: (e['speed'] as num?)?.toDouble() ?? 1,
+      error: e['error'] as String?,
+    );
+  }
+
+  @override
+  Future<void> open(MediaItem item,
+      {bool autoplay = true, bool loop = false, bool muted = false}) async {
+    _state.value = const PlaybackState(buffering: true);
+    final key = await _vault.fileKeyFor(item);
+    await _ch.invokeMethod('open', {
+      'path': _vault.blobPath(item.blobId),
+      'key': key,
+      'autoplay': autoplay,
+      'loop': loop,
+      'muted': muted,
+    });
+    key.fillRange(0, key.length, 0);
+  }
+
+  @override
+  Future<void> play() => _ch.invokeMethod('play');
+  @override
+  Future<void> pause() => _ch.invokeMethod('pause');
+  @override
+  Future<void> seek(Duration to) =>
+      _ch.invokeMethod('seek', {'ms': to.inMilliseconds});
+  @override
+  Future<void> setSpeed(double speed) =>
+      _ch.invokeMethod('speed', {'speed': speed});
+  @override
+  Future<void> setVolume(double volume) =>
+      _ch.invokeMethod('volume', {'volume': volume});
+  @override
+  Future<void> setLooping(bool loop) =>
+      _ch.invokeMethod('loop', {'loop': loop});
+  @override
+  Future<void> stop() => _ch.invokeMethod('stop');
+
+  @override
+  Future<void> dispose() async {
+    await _sub?.cancel();
+    await _ch.invokeMethod('release');
+    _state.dispose();
+  }
+
+  @override
+  Future<Uint8List?> captureFrame(MediaItem item, Duration position) async {
+    final key = await _vault.fileKeyFor(item);
+    try {
+      return await const MethodChannel('lockbox/native').invokeMethod<Uint8List>(
+          'grabFrame', {
+        'blob': _vault.blobPath(item.blobId),
+        'key': key,
+        'positionMs': position.inMilliseconds,
+      });
+    } finally {
+      key.fillRange(0, key.length, 0);
+    }
+  }
+
+  @override
+  Widget buildView() => PlatformViewLink(
+        viewType: 'lockbox/video_view',
+        surfaceFactory: (context, controller) => AndroidViewSurface(
+          controller: controller as AndroidViewController,
+          gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
+          hitTestBehavior: PlatformViewHitTestBehavior.transparent,
+        ),
+        onCreatePlatformView: (params) {
+          // "Expensive" = hybrid composition: the real SurfaceView is used,
+          // which is what lets Android show HDR video in true HDR.
+          final c = PlatformViewsService.initExpensiveAndroidView(
+            id: params.id,
+            viewType: 'lockbox/video_view',
+            layoutDirection: TextDirection.ltr,
+            creationParamsCodec: const StandardMessageCodec(),
+            onFocus: () => params.onFocusChanged(true),
+          );
+          c.addOnPlatformViewCreatedListener(params.onPlatformViewCreated);
+          c.create();
+          return c;
+        },
+      );
+}
+
+// ---------------------------------------------------------------- Windows
+
+class _MpvPlayer extends MediaPlayer {
+  _MpvPlayer(this._server) {
+    final s = _p.stream;
+    _subs.addAll([
+      s.position.listen((v) => _set(_state.value.copyWith(position: v))),
+      s.duration.listen((v) => _set(_state.value.copyWith(duration: v))),
+      s.buffer.listen((v) => _set(_state.value.copyWith(buffered: v))),
+      s.playing.listen((v) =>
+          _set(_state.value.copyWith(playing: v, ended: v ? false : null))),
+      s.buffering.listen((v) => _set(_state.value.copyWith(buffering: v))),
+      s.completed.listen((v) => _set(_state.value.copyWith(ended: v))),
+      s.width.listen((v) => _set(_state.value.copyWith(width: v ?? 0))),
+      s.height.listen((v) => _set(_state.value.copyWith(height: v ?? 0))),
+      s.volume.listen((v) => _set(_state.value.copyWith(volume: v / 100))),
+      s.rate.listen((v) => _set(_state.value.copyWith(speed: v))),
+      s.error.listen((v) => _set(_state.value.copyWith(error: v))),
+    ]);
+  }
+
+  final MediaServer _server;
+  final mk.Player _p = mk.Player(
+      configuration: const mk.PlayerConfiguration(title: 'Lockbox'));
+  late final mkv.VideoController _vc = mkv.VideoController(_p,
+      configuration: const mkv.VideoControllerConfiguration(
+          enableHardwareAcceleration: true));
+  final _state = ValueNotifier(const PlaybackState());
+  final _subs = <StreamSubscription>[];
+
+  void _set(PlaybackState s) => _state.value = s;
+
+  @override
+  ValueListenable<PlaybackState> get state => _state;
+
+  @override
+  Future<void> open(MediaItem item,
+      {bool autoplay = true, bool loop = false, bool muted = false}) async {
+    _state.value = const PlaybackState(buffering: true);
+    await _p.setPlaylistMode(loop ? mk.PlaylistMode.single : mk.PlaylistMode.none);
+    await _p.setVolume(muted ? 0 : 100);
+    await _p.setRate(1);
+    await _p.open(
+        mk.Media(_server.urlFor(item.blobId, mimeType: item.mimeType)),
+        play: autoplay);
+  }
+
+  @override
+  Future<void> play() async {
+    if (_state.value.ended) await _p.seek(Duration.zero);
+    await _p.play();
+  }
+
+  @override
+  Future<void> pause() => _p.pause();
+  @override
+  Future<void> seek(Duration to) => _p.seek(to);
+  @override
+  Future<void> setSpeed(double speed) => _p.setRate(speed);
+  @override
+  Future<void> setVolume(double volume) => _p.setVolume(volume * 100);
+  @override
+  Future<void> setLooping(bool loop) =>
+      _p.setPlaylistMode(loop ? mk.PlaylistMode.single : mk.PlaylistMode.none);
+  @override
+  Future<void> stop() => _p.stop();
+
+  @override
+  Future<void> dispose() async {
+    for (final s in _subs) {
+      await s.cancel();
+    }
+    await _p.dispose();
+    _state.dispose();
+  }
+
+  @override
+  Future<Uint8List?> captureFrame(MediaItem item, Duration position) =>
+      _p.screenshot(format: 'image/jpeg');
+
+  @override
+  Widget buildView() => mkv.Video(
+        controller: _vc,
+        controls: mkv.NoVideoControls,
+        fill: Colors.black,
+      );
+}
+
+/// Windows only: makes a thumbnail + reads duration/size of a plaintext
+/// video file (during import) using libmpv.
+Future<({Uint8List? jpeg, int? durationMs, int? width, int? height})>
+    mpvProbe(String path) async {
+  final p = mk.Player();
+  final vc = mkv.VideoController(p);
+  try {
+    await p.open(mk.Media(Uri.file(path).toString()), play: false);
+    await vc.waitUntilFirstFrameRendered.timeout(const Duration(seconds: 8));
+    final dur = p.state.duration;
+    if (dur > const Duration(seconds: 3)) {
+      await p.seek(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
+    final shot = await p.screenshot(format: 'image/jpeg');
+    return (
+      jpeg: shot,
+      durationMs: dur == Duration.zero ? null : dur.inMilliseconds,
+      width: p.state.width,
+      height: p.state.height,
+    );
+  } catch (_) {
+    return (
+      jpeg: null,
+      durationMs: p.state.duration == Duration.zero
+          ? null
+          : p.state.duration.inMilliseconds,
+      width: p.state.width,
+      height: p.state.height,
+    );
+  } finally {
+    await p.dispose();
+  }
+}
