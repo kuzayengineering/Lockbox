@@ -333,36 +333,37 @@ class _MpvPlayer extends MediaPlayer {
 }
 
 /// Windows only: makes a thumbnail + reads duration/size of a plaintext
-/// video file (during import) using libmpv.
+/// video file (during import) using libmpv. Never takes longer than ~15 s:
+/// a video that can't be decoded quickly just gets no thumbnail.
 Future<({Uint8List? jpeg, int? durationMs, int? width, int? height})>
     mpvProbe(String path) async {
   final p = mk.Player();
   final vc = mkv.VideoController(p);
+  ({Uint8List? jpeg, int? durationMs, int? width, int? height}) current(
+          Uint8List? jpeg) =>
+      (
+        jpeg: jpeg,
+        durationMs: p.state.duration == Duration.zero
+            ? null
+            : p.state.duration.inMilliseconds,
+        width: p.state.width,
+        height: p.state.height,
+      );
   try {
-    await p.open(mk.Media(Uri.file(path).toString()), play: false);
-    await vc.waitUntilFirstFrameRendered.timeout(const Duration(seconds: 8));
-    final dur = p.state.duration;
-    if (dur > const Duration(seconds: 3)) {
-      await p.seek(const Duration(seconds: 1));
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-    }
-    final shot = await p.screenshot(format: 'image/jpeg');
-    return (
-      jpeg: shot,
-      durationMs: dur == Duration.zero ? null : dur.inMilliseconds,
-      width: p.state.width,
-      height: p.state.height,
-    );
+    return await () async {
+      await p.setVolume(0);
+      await p.open(mk.Media(Uri.file(path).toString()), play: false);
+      await vc.waitUntilFirstFrameRendered;
+      if (p.state.duration > const Duration(seconds: 3)) {
+        await p.seek(const Duration(seconds: 1));
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      }
+      return current(await p.screenshot(format: 'image/jpeg'));
+    }()
+        .timeout(const Duration(seconds: 15));
   } catch (_) {
-    return (
-      jpeg: null,
-      durationMs: p.state.duration == Duration.zero
-          ? null
-          : p.state.duration.inMilliseconds,
-      width: p.state.width,
-      height: p.state.height,
-    );
+    return current(null);
   } finally {
-    await p.dispose();
+    unawaited(p.dispose().timeout(const Duration(seconds: 5), onTimeout: () {}));
   }
 }

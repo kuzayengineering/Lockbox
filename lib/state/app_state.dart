@@ -335,8 +335,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
             files,
             deleteOriginals: deleteOriginals,
             folderId: query.folderId,
-            onProgress: (d, t, name) => task.value =
-                TaskProgress('Encrypting $name', done: d, total: t),
+            onProgress: (d, t, name) {
+              task.value = TaskProgress('Encrypting $name', done: d, total: t);
+              changed(save: false); // show items as they arrive
+            },
           ));
     } finally {
       task.value = null;
@@ -381,6 +383,26 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     v.data.items.add(item);
     await changed();
     return item;
+  }
+
+  final _thumbFixing = <String>{};
+
+  /// Gives a video without a thumbnail one, taken from the playing video.
+  Future<void> thumbnailFromPlayback(MediaItem video, Duration position) async {
+    if (video.thumbId != null || !_thumbFixing.add(video.id)) return;
+    try {
+      final jpeg = await player.captureFrame(video, position);
+      if (jpeg == null || jpeg.isEmpty) return;
+      final thumb = await photoThumbnail(jpeg);
+      if (thumb == null || !isUnlocked) return;
+      video.thumbId = await vault.storeThumbnail(thumb);
+      _thumbs.remove(video.id);
+      await changed();
+    } catch (_) {
+      // try again next time it's played
+    } finally {
+      _thumbFixing.remove(video.id);
+    }
   }
 
   static String formatClock(Duration d) {

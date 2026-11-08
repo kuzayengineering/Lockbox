@@ -171,7 +171,8 @@ class Importer {
         thumb ??= await photoThumbnail(bytes);
       } else if (!Native.isAndroid) {
         try {
-          final m = await mpvProbe(opened.path);
+          final m = await mpvProbe(opened.path)
+              .timeout(const Duration(seconds: 20));
           thumb ??= m.jpeg == null ? null : await _shrinkJpeg(m.jpeg!);
           item.durationMs ??= m.durationMs;
           item.width ??= m.width;

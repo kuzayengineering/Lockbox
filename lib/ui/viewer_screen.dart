@@ -187,15 +187,20 @@ class _ViewerScreenState extends State<ViewerScreen> {
             ),
           ),
           // ---- top bar
-          AnimatedOpacity(
-            opacity: _chrome && _drag == 0 ? 1 : 0,
-            duration: const Duration(milliseconds: 180),
-            child: IgnorePointer(
-              ignoring: !_chrome,
-              child: _TopBar(
-                item: item,
-                position: '${_index + 1} / ${_items.length}',
-                onMenu: _menu,
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: AnimatedOpacity(
+              opacity: _chrome && _drag == 0 ? 1 : 0,
+              duration: const Duration(milliseconds: 180),
+              child: IgnorePointer(
+                ignoring: !_chrome,
+                child: _TopBar(
+                  item: item,
+                  position: '${_index + 1} / ${_items.length}',
+                  onMenu: _menu,
+                ),
               ),
             ),
           ),
@@ -445,6 +450,12 @@ class _VideoPageState extends State<_VideoPage> {
           ValueListenableBuilder<PlaybackState>(
             valueListenable: player.state,
             builder: (context, s, _) {
+              if (s.playing &&
+                  widget.item.thumbId == null &&
+                  s.position > const Duration(milliseconds: 800)) {
+                WidgetsBinding.instance.addPostFrameCallback(
+                    (_) => app.thumbnailFromPlayback(widget.item, s.position));
+              }
               if (s.duration > Duration.zero && widget.item.durationMs == null) {
                 WidgetsBinding.instance
                     .addPostFrameCallback((_) => app.learnDuration(widget.item, s.duration));
@@ -455,7 +466,7 @@ class _VideoPageState extends State<_VideoPage> {
                 Opacity(opacity: started ? 1 : 0.01, child: player.buildView()),
                 if (s.buffering && !started)
                   const Center(child: CircularProgressIndicator(color: Colors.white)),
-                if (s.error != null)
+                if (s.error != null && !started && !s.buffering)
                   Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24),
