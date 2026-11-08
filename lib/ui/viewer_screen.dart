@@ -3,7 +3,8 @@
 //  * tap to show/hide controls; photos: pinch or double-tap to zoom
 //  * videos start automatically, scrub bar, double-tap sides to skip 10 s,
 //    speed, loop and mute; HDR/HLG shown in true HDR on Android
-//  * keyboard on Windows: ← → switch, space play/pause, Esc close, F fav
+//  * frame-by-frame buttons; keyboard on Windows: ← → switch, space
+//    play/pause, , . previous/next frame, Esc close, F favorite
 
 import 'dart:async';
 
@@ -104,6 +105,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
     if (k == LogicalKeyboardKey.arrowLeft) _go(-1);
     if (k == LogicalKeyboardKey.escape) Navigator.pop(context);
     if (k == LogicalKeyboardKey.space && _item.kind != MediaKind.photo) _player.togglePlay();
+    if (k == LogicalKeyboardKey.comma && _item.kind == MediaKind.video) _player.stepFrame(-1, _item.fps);
+    if (k == LogicalKeyboardKey.period && _item.kind == MediaKind.video) _player.stepFrame(1, _item.fps);
     if (k == LogicalKeyboardKey.keyF) _app.setFavorite([_item], !_item.favorite).then((_) => setState(() {}));
     return KeyEventResult.handled;
   }
@@ -621,65 +624,62 @@ class _PlaybackBarState extends State<_PlaybackBar> {
         final dur = s.duration.inMilliseconds.toDouble();
         final pos = (_scrub ?? s.position.inMilliseconds.toDouble()).clamp(0.0, dur <= 0 ? 0.0 : dur);
         const white = TextStyle(color: Colors.white, fontSize: 12);
+        final isVideo = widget.item.kind == MediaKind.video;
+        Widget btn(IconData icon, String tip, VoidCallback onTap, {double size = 26}) => IconButton(
+              color: Colors.white,
+              iconSize: size,
+              tooltip: tip,
+              icon: Icon(icon),
+              onPressed: () {
+                onTap();
+                widget.onInteract();
+              },
+            );
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
+            // Row 1: scrubber with times
             Row(children: [
-              IconButton(
-                color: Colors.white,
-                icon: Icon(s.playing ? Icons.pause : Icons.play_arrow),
-                onPressed: () {
-                  player.togglePlay();
-                  widget.onInteract();
-                },
-              ),
               Text(formatDuration(Duration(milliseconds: pos.round())), style: white),
               Expanded(
-                child: SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    trackHeight: 3,
-                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-                    activeTrackColor: Colors.white,
-                    inactiveTrackColor: Colors.white24,
-                    thumbColor: Colors.white,
-                    overlayShape: SliderComponentShape.noOverlay,
-                  ),
-                  child: Slider(
-                    min: 0,
-                    max: dur <= 0 ? 1 : dur,
-                    value: dur <= 0 ? 0 : pos,
-                    onChangeStart: (v) {
-                      _wasPlaying = s.playing;
-                      player.pause();
-                      setState(() => _scrub = v);
-                    },
-                    onChanged: (v) {
-                      setState(() => _scrub = v);
-                      player.seek(Duration(milliseconds: v.round()));
-                    },
-                    onChangeEnd: (v) async {
-                      await player.seek(Duration(milliseconds: v.round()));
-                      if (_wasPlaying) await player.play();
-                      setState(() => _scrub = null);
-                      widget.onInteract();
-                    },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 3,
+                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                      activeTrackColor: Colors.white,
+                      inactiveTrackColor: Colors.white24,
+                      thumbColor: Colors.white,
+                      overlayShape: SliderComponentShape.noOverlay,
+                    ),
+                    child: Slider(
+                      min: 0,
+                      max: dur <= 0 ? 1 : dur,
+                      value: dur <= 0 ? 0 : pos,
+                      onChangeStart: (v) {
+                        _wasPlaying = s.playing;
+                        player.pause();
+                        setState(() => _scrub = v);
+                      },
+                      onChanged: (v) {
+                        setState(() => _scrub = v);
+                        player.seek(Duration(milliseconds: v.round()));
+                      },
+                      onChangeEnd: (v) async {
+                        await player.seek(Duration(milliseconds: v.round()));
+                        if (_wasPlaying) await player.play();
+                        setState(() => _scrub = null);
+                        widget.onInteract();
+                      },
+                    ),
                   ),
                 ),
               ),
               Text(formatDuration(s.duration), style: white),
-              if (widget.item.kind == MediaKind.video && !s.playing && s.position > Duration.zero)
-                IconButton(
-                  color: Colors.white,
-                  tooltip: 'Save frame to Lockbox',
-                  icon: const Icon(Icons.photo_camera_outlined),
-                  onPressed: () => _saveFrame(s.position),
-                ),
-              IconButton(
-                color: Colors.white,
-                tooltip: s.volume == 0 ? 'Unmute' : 'Mute',
-                icon: Icon(s.volume == 0 ? Icons.volume_off : Icons.volume_up),
-                onPressed: () => player.setVolume(s.volume == 0 ? 1 : 0),
-              ),
+            ]),
+            // Row 2: buttons
+            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
               PopupMenuButton<double>(
                 tooltip: 'Speed',
                 onSelected: player.setSpeed,
@@ -688,12 +688,37 @@ class _PlaybackBarState extends State<_PlaybackBar> {
                     CheckedPopupMenuItem(
                         value: sp, checked: (s.speed - sp).abs() < 0.01, child: Text('${sp}x')),
                 ],
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Text('${s.speed == s.speed.roundToDouble() ? s.speed.toInt() : s.speed}x',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                child: SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: Center(
+                    child: Text('${s.speed == s.speed.roundToDouble() ? s.speed.toInt() : s.speed}x',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  ),
                 ),
               ),
+              if (isVideo)
+                btn(Icons.skip_previous_outlined, 'Previous frame',
+                    () => player.stepFrame(-1, widget.item.fps)),
+              btn(s.playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                  s.playing ? 'Pause' : 'Play', player.togglePlay,
+                  size: 44),
+              if (isVideo)
+                btn(Icons.skip_next_outlined, 'Next frame',
+                    () => player.stepFrame(1, widget.item.fps)),
+              if (isVideo)
+                IconButton(
+                  color: Colors.white,
+                  disabledColor: Colors.white38,
+                  tooltip: 'Save frame to Lockbox (pause first)',
+                  icon: const Icon(Icons.photo_camera_outlined),
+                  onPressed: !s.playing && s.position > Duration.zero
+                      ? () => _saveFrame(s.position)
+                      : null,
+                ),
+              btn(s.volume == 0 ? Icons.volume_off : Icons.volume_up,
+                  s.volume == 0 ? 'Unmute' : 'Mute',
+                  () => player.setVolume(s.volume == 0 ? 1 : 0)),
             ]),
           ]),
         );

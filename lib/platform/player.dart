@@ -100,6 +100,32 @@ abstract class MediaPlayer {
 
   Future<void> togglePlay() =>
       state.value.playing ? pause() : play();
+
+  /// Pauses and moves one frame forward ([direction] = 1) or back (-1).
+  /// [fps] is the video's frame rate (defaults to 30 if unknown).
+  Future<void> stepFrame(int direction, double? fps) async {
+    final frameMs = 1000 / ((fps == null || fps <= 0) ? 30 : fps);
+    final s = state.value;
+    if (s.playing) await pause();
+    // Successive taps build on the last target, not the (lagging) reported
+    // position, so each tap moves exactly one frame.
+    final now = DateTime.now();
+    final base = (_stepTarget != null &&
+            _stepAt != null &&
+            now.difference(_stepAt!) < const Duration(seconds: 2))
+        ? _stepTarget!
+        : s.position.inMicroseconds / 1000;
+    var target = base + direction * frameMs;
+    final maxMs = s.duration.inMilliseconds.toDouble();
+    if (target < 0) target = 0;
+    if (maxMs > 0 && target > maxMs) target = maxMs;
+    _stepTarget = target;
+    _stepAt = now;
+    await seek(Duration(microseconds: (target * 1000).round()));
+  }
+
+  double? _stepTarget;
+  DateTime? _stepAt;
 }
 
 // ---------------------------------------------------------------- Android
