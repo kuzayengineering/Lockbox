@@ -398,8 +398,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// decoder, which made the first "Save frame" fail.
   Future<void> _captureQueue = Future.value();
 
-  Future<Uint8List?> _capture(MediaItem video, Duration position) {
-    final next = _captureQueue.then((_) => player.captureFrame(video, position));
+  Future<Uint8List?> _capture(MediaItem video, Duration position,
+      {bool allowInterrupt = true}) {
+    final next = _captureQueue.then((_) =>
+        player.captureFrame(video, position, allowInterrupt: allowInterrupt));
     _captureQueue = next.then((_) {}, onError: (_) {});
     return next;
   }
@@ -408,7 +410,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> thumbnailFromPlayback(MediaItem video, Duration position) async {
     if (video.thumbId != null || !_thumbFixing.add(video.id)) return;
     try {
-      final jpeg = await _capture(video, position);
+      final jpeg = await _capture(video, position, allowInterrupt: false);
       if (jpeg == null || jpeg.isEmpty) return;
       final thumb = await photoThumbnail(jpeg);
       if (thumb == null || !isUnlocked) return;

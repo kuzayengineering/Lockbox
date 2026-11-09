@@ -102,7 +102,10 @@ abstract class MediaPlayer {
   Future<void> endScrub(Duration finalPosition);
 
   /// JPEG of the video frame at [position] (the paused frame).
-  Future<Uint8List?> captureFrame(MediaItem item, Duration position);
+  /// If [allowInterrupt] is false, only methods that don't disturb
+  /// playback are used (for automatic thumbnails).
+  Future<Uint8List?> captureFrame(MediaItem item, Duration position,
+      {bool allowInterrupt = true});
 
   Future<void> togglePlay() =>
       state.value.playing ? pause() : play();
@@ -221,8 +224,18 @@ class _AndroidPlayer extends MediaPlayer {
   }
 
   @override
-  Future<Uint8List?> captureFrame(MediaItem item, Duration position) async {
+  Future<Uint8List?> captureFrame(MediaItem item, Duration position,
+      {bool allowInterrupt = true}) async {
+    // 1. Copy what's on screen (no second decoder needed).
+    try {
+      final shown = await _ch.invokeMethod<Uint8List>('captureDisplayed');
+      if (shown != null && shown.isNotEmpty) return shown;
+    } catch (_) {}
+    if (!allowInterrupt) return null;
+    // 2. Free the player's decoder, extract the frame from the file,
+    //    then put the video back where it was (paused).
     final key = await _vault.fileKeyFor(item);
+    await _ch.invokeMethod('suspendDecoders');
     try {
       return await const MethodChannel('lockbox/native').invokeMethod<Uint8List>(
           'grabFrame', {
@@ -232,6 +245,7 @@ class _AndroidPlayer extends MediaPlayer {
       });
     } finally {
       key.fillRange(0, key.length, 0);
+      await _ch.invokeMethod('resumeDecoders', {'ms': position.inMilliseconds});
     }
   }
 
@@ -374,7 +388,8 @@ class _MpvPlayer extends MediaPlayer {
   }
 
   @override
-  Future<Uint8List?> captureFrame(MediaItem item, Duration position) async {
+  Future<Uint8List?> captureFrame(MediaItem item, Duration position,
+      {bool allowInterrupt = true}) async {
     for (var attempt = 1; attempt <= 3; attempt++) {
       final shot = await _p.screenshot(format: 'image/jpeg');
       if (shot != null && shot.isNotEmpty) return shot;

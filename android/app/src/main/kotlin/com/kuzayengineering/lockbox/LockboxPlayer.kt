@@ -1,10 +1,13 @@
 package com.kuzayengineering.lockbox
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.view.PixelCopy
+import android.view.SurfaceView
 import android.view.View
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
@@ -28,7 +31,10 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.StandardMessageCodec
 import io.flutter.plugin.platform.PlatformView
 import io.flutter.plugin.platform.PlatformViewFactory
+import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Bridges Flutter to Android's ExoPlayer (Media3).
@@ -156,6 +162,23 @@ class LockboxPlayer(
                     player?.clearMediaItems()
                     result.success(null)
                 }
+                // Save frame: copy the picture that is on screen right now.
+                "captureDisplayed" -> captureDisplayed(result)
+                // Fallback for Save frame: free the hardware decoder so a
+                // second one can be used to extract the frame, then restore.
+                "suspendDecoders" -> {
+                    player?.stop()
+                    result.success(null)
+                }
+                "resumeDecoders" -> {
+                    val p = player
+                    if (p != null) {
+                        p.prepare()
+                        p.seekTo((call.argument<Number>("ms") ?: 0).toLong())
+                        p.playWhenReady = false
+                    }
+                    result.success(null)
+                }
                 "release" -> {
                     release()
                     result.success(null)
@@ -165,6 +188,57 @@ class LockboxPlayer(
         } catch (e: Exception) {
             result.error("player", e.message, null)
         }
+    }
+
+    /**
+     * Copies the current video frame straight from the player's surface.
+     * Uses no extra decoder (phones often allow only one 4K HDR decoder),
+     * so it works while the player holds the video. Full video resolution.
+     */
+    private fun captureDisplayed(result: MethodChannel.Result) {
+        val p = player
+        val sv = views.lastOrNull()?.videoSurfaceView as? SurfaceView
+        if (p == null || sv == null || sv.width == 0 || sv.height == 0 || !sv.holder.surface.isValid) {
+            result.success(null)
+            return
+        }
+        val vs = p.videoSize
+        val long = max(vs.width, vs.height)
+        val short = min(vs.width, vs.height)
+        val portrait = sv.height > sv.width
+        val w = if (long > 0) (if (portrait) short else long) else sv.width
+        val h = if (long > 0) (if (portrait) long else short) else sv.height
+        val bmp = try {
+            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        } catch (e: OutOfMemoryError) {
+            result.success(null)
+            return
+        }
+        try {
+            PixelCopy.request(sv, bmp, { code ->
+                if (code != PixelCopy.SUCCESS || looksBlank(bmp)) {
+                    result.success(null)
+                } else {
+                    Thread {
+                        val out = ByteArrayOutputStream()
+                        bmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                        handler.post { result.success(out.toByteArray()) }
+                    }.start()
+                }
+            }, handler)
+        } catch (e: Exception) {
+            result.success(null)
+        }
+    }
+
+    private fun looksBlank(b: Bitmap): Boolean {
+        for (i in 0 until 8) {
+            for (j in 0 until 8) {
+                val c = b.getPixel(b.width * (2 * i + 1) / 16, b.height * (2 * j + 1) / 16)
+                if (((c shr 16) and 0xff) + ((c shr 8) and 0xff) + (c and 0xff) > 24) return false
+            }
+        }
+        return true
     }
 
     fun release() {
