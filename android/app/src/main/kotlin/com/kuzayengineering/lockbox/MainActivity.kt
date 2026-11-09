@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
+import android.media.AudioManager
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
@@ -49,6 +50,9 @@ class MainActivity : FlutterActivity() {
         // Block screenshots / screen recording / casting and hide content in
         // the recent-apps switcher. Always on: nothing in Lockbox is shareable.
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        // Volume buttons always control media volume in Lockbox (not the
+        // ringer), even when nothing is playing at that moment.
+        volumeControlStream = AudioManager.STREAM_MUSIC
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

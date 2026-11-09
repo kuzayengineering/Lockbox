@@ -98,16 +98,30 @@ class _ViewerScreenState extends State<ViewerScreen> {
     _pages.animateToPage(n, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
   }
 
+  /// Keyboard shortcuts (Windows). Only the keys used here are claimed;
+  /// everything else, including the phone's volume buttons, is passed on.
   KeyEventResult _onKey(FocusNode _, KeyEvent e) {
     if (e is! KeyDownEvent) return KeyEventResult.ignored;
     final k = e.logicalKey;
-    if (k == LogicalKeyboardKey.arrowRight) _go(1);
-    if (k == LogicalKeyboardKey.arrowLeft) _go(-1);
-    if (k == LogicalKeyboardKey.escape) Navigator.pop(context);
-    if (k == LogicalKeyboardKey.space && _item.kind != MediaKind.photo) _player.togglePlay();
-    if (k == LogicalKeyboardKey.comma && _item.kind == MediaKind.video) _player.stepFrame(-1, _item.fps);
-    if (k == LogicalKeyboardKey.period && _item.kind == MediaKind.video) _player.stepFrame(1, _item.fps);
-    if (k == LogicalKeyboardKey.keyF) _app.setFavorite([_item], !_item.favorite).then((_) => setState(() {}));
+    final media = _item.kind != MediaKind.photo;
+    final video = _item.kind == MediaKind.video;
+    if (k == LogicalKeyboardKey.arrowRight) {
+      _go(1);
+    } else if (k == LogicalKeyboardKey.arrowLeft) {
+      _go(-1);
+    } else if (k == LogicalKeyboardKey.escape) {
+      Navigator.pop(context);
+    } else if (k == LogicalKeyboardKey.space && media) {
+      _player.togglePlay();
+    } else if (k == LogicalKeyboardKey.comma && video) {
+      _player.stepFrame(-1, _item.fps);
+    } else if (k == LogicalKeyboardKey.period && video) {
+      _player.stepFrame(1, _item.fps);
+    } else if (k == LogicalKeyboardKey.keyF) {
+      _app.setFavorite([_item], !_item.favorite).then((_) => setState(() {}));
+    } else {
+      return KeyEventResult.ignored;
+    }
     return KeyEventResult.handled;
   }
 
@@ -716,27 +730,28 @@ class _PlaybackBarState extends State<_PlaybackBar> {
                   ),
                 ),
               ),
-              if (isVideo)
+              // Frame tools only appear while the video is paused.
+              if (isVideo && !s.playing)
                 btn(Icons.skip_previous_outlined, 'Previous frame',
                     () => player.stepFrame(-1, widget.item.fps)),
               btn(s.playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
                   s.playing ? 'Pause' : 'Play', player.togglePlay,
                   size: 44),
-              if (isVideo)
+              if (isVideo && !s.playing)
                 btn(Icons.skip_next_outlined, 'Next frame',
                     () => player.stepFrame(1, widget.item.fps)),
-              if (isVideo)
+              if (isVideo && !s.playing)
                 IconButton(
                   color: Colors.white,
                   disabledColor: Colors.white38,
-                  tooltip: 'Save frame to Lockbox (pause first)',
+                  tooltip: 'Save frame to Lockbox',
                   icon: _saving
                       ? const SizedBox(
                           width: 22,
                           height: 22,
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.photo_camera_outlined),
-                  onPressed: !s.playing && s.position > Duration.zero && !_saving
+                  onPressed: s.position > Duration.zero && !_saving
                       ? () => _saveFrame(s.position)
                       : null,
                 ),
