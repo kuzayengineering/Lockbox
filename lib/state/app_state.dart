@@ -359,7 +359,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// folder inside Lockbox. It is dated like the source video (plus the
   /// moment in the video) and gets the same tags.
   Future<MediaItem?> saveFrame(MediaItem video, Duration position) async {
-    final jpeg = await player.captureFrame(video, position);
+    final jpeg = await _capture(video, position);
     if (jpeg == null || jpeg.isEmpty) return null;
     final v = vault;
     final folder = v.topFolderNamed('Screenshots');
@@ -394,11 +394,21 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   final _thumbFixing = <String>{};
 
+  /// Frame grabs run one at a time: two at once compete for the video
+  /// decoder, which made the first "Save frame" fail.
+  Future<void> _captureQueue = Future.value();
+
+  Future<Uint8List?> _capture(MediaItem video, Duration position) {
+    final next = _captureQueue.then((_) => player.captureFrame(video, position));
+    _captureQueue = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
   /// Gives a video without a thumbnail one, taken from the playing video.
   Future<void> thumbnailFromPlayback(MediaItem video, Duration position) async {
     if (video.thumbId != null || !_thumbFixing.add(video.id)) return;
     try {
-      final jpeg = await player.captureFrame(video, position);
+      final jpeg = await _capture(video, position);
       if (jpeg == null || jpeg.isEmpty) return;
       final thumb = await photoThumbnail(jpeg);
       if (thumb == null || !isUnlocked) return;

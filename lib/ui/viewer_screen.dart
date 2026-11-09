@@ -615,14 +615,21 @@ class _PlaybackBarState extends State<_PlaybackBar> {
 
   static const _speeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
+  bool _saving = false;
+
   Future<void> _saveFrame(Duration at) async {
+    if (_saving) return;
     final app = context.read<AppState>();
+    setState(() => _saving = true);
     try {
       final saved = await app.saveFrame(widget.item, at);
       if (!mounted) return;
-      snack(context, saved == null ? 'Couldn\'t capture this frame' : 'Frame saved to Screenshots in Lockbox');
+      snack(context, saved == null ? 'Couldn\'t capture this frame – please try again' : 'Frame saved to Screenshots in Lockbox');
     } catch (e) {
-      if (mounted) snack(context, 'Couldn\'t capture this frame: $e');
+      final msg = e is PlatformException ? (e.message ?? e.code) : e.toString();
+      if (mounted) snack(context, 'Couldn\'t capture this frame: $msg');
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -723,8 +730,13 @@ class _PlaybackBarState extends State<_PlaybackBar> {
                   color: Colors.white,
                   disabledColor: Colors.white38,
                   tooltip: 'Save frame to Lockbox (pause first)',
-                  icon: const Icon(Icons.photo_camera_outlined),
-                  onPressed: !s.playing && s.position > Duration.zero
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.photo_camera_outlined),
+                  onPressed: !s.playing && s.position > Duration.zero && !_saving
                       ? () => _saveFrame(s.position)
                       : null,
                 ),

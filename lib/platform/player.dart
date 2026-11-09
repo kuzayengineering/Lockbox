@@ -374,8 +374,14 @@ class _MpvPlayer extends MediaPlayer {
   }
 
   @override
-  Future<Uint8List?> captureFrame(MediaItem item, Duration position) =>
-      _p.screenshot(format: 'image/jpeg');
+  Future<Uint8List?> captureFrame(MediaItem item, Duration position) async {
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      final shot = await _p.screenshot(format: 'image/jpeg');
+      if (shot != null && shot.isNotEmpty) return shot;
+      await Future<void>.delayed(Duration(milliseconds: 250 * attempt));
+    }
+    return null;
+  }
 
   @override
   Widget buildView() => mkv.Video(

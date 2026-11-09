@@ -257,17 +257,26 @@ class MainActivity : FlutterActivity() {
                 val key = call.argument<ByteArray>("key")!!
                 val positionMs = (call.argument<Number>("positionMs") ?: 0).toLong()
                 background(result) {
-                    val ds = EncryptedMediaDataSource(File(blob), key)
-                    val r = MediaMetadataRetriever()
-                    try {
-                        r.setDataSource(ds)
-                        val bmp = r.getFrameAtTime(positionMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
-                            ?: throw IllegalStateException("No frame at that position")
-                        jpeg(bmp, 95)
-                    } finally {
-                        try { r.release() } catch (_: Exception) {}
-                        ds.close()
+                    // The phone's video decoder can be briefly busy (the
+                    // player is using one too), so try a few times.
+                    var lastError: Exception? = null
+                    for (attempt in 1..3) {
+                        val ds = EncryptedMediaDataSource(File(blob), key)
+                        val r = MediaMetadataRetriever()
+                        try {
+                            r.setDataSource(ds)
+                            val bmp = r.getFrameAtTime(positionMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+                            if (bmp != null) return@background jpeg(bmp, 95)
+                            lastError = IllegalStateException("the decoder returned no picture")
+                        } catch (e: Exception) {
+                            lastError = e
+                        } finally {
+                            try { r.release() } catch (_: Exception) {}
+                            try { ds.close() } catch (_: Exception) {}
+                        }
+                        Thread.sleep(250L * attempt)
                     }
+                    throw lastError ?: IllegalStateException("unknown error")
                 }
             }
 
