@@ -94,7 +94,7 @@ class _FilterSheetState extends State<_FilterSheet> {
             header('Video quality'),
             Wrap(spacing: 8, children: [
               FilterChip(
-                label: const Text('HDR / HLG / Dolby Vision'),
+                label: const Text('HDR (video & Ultra HDR photos)'),
                 selected: q.hdrOnly,
                 onSelected: (v) => _set(q.copyWith(hdrOnly: v)),
               ),

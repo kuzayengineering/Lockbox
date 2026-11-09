@@ -6,7 +6,7 @@
 enum MediaKind { photo, video, audio }
 
 /// High dynamic range format of a video.
-enum HdrFormat { none, hlg, hdr10, dolbyVision }
+enum HdrFormat { none, hlg, hdr10, dolbyVision, ultraHdr }
 
 extension HdrFormatLabel on HdrFormat {
   String get label => switch (this) {
@@ -14,6 +14,7 @@ extension HdrFormatLabel on HdrFormat {
         HdrFormat.hlg => 'HLG',
         HdrFormat.hdr10 => 'HDR10',
         HdrFormat.dolbyVision => 'Dolby Vision',
+        HdrFormat.ultraHdr => 'Ultra HDR',
       };
   bool get isHdr => this != HdrFormat.none;
 }
@@ -192,6 +193,7 @@ class VaultSettings {
     this.keepCopyOnRestore = false,
     this.autoTagFromNames = true,
     this.tagRulesVersion = 0,
+    this.hdrScanVersion = 0,
   });
 
   /// How long the app may be in the background before it locks.
@@ -219,6 +221,9 @@ class VaultSettings {
   /// Which clean-up of automatic tags has already run (see AppState).
   int tagRulesVersion;
 
+  /// Whether existing photos have been checked for Ultra HDR.
+  int hdrScanVersion;
+
   Map<String, dynamic> toJson() => {
         'autoLock': autoLockSeconds,
         'cols': gridColumns,
@@ -230,6 +235,7 @@ class VaultSettings {
         'keepOnRestore': keepCopyOnRestore,
         'autoTag': autoTagFromNames,
         'tagRules': tagRulesVersion,
+        'hdrScan': hdrScanVersion,
       };
 
   factory VaultSettings.fromJson(Map<String, dynamic>? j) => VaultSettings(
@@ -243,6 +249,7 @@ class VaultSettings {
         keepCopyOnRestore: (j?['keepOnRestore'] as bool?) ?? false,
         autoTagFromNames: (j?['autoTag'] as bool?) ?? true,
         tagRulesVersion: (j?['tagRules'] as int?) ?? 0,
+        hdrScanVersion: (j?['hdrScan'] as int?) ?? 0,
       );
 }
 

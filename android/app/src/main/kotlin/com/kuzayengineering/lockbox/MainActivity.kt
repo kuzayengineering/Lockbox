@@ -62,6 +62,8 @@ class MainActivity : FlutterActivity() {
         player = p
         flutterEngine.platformViewsController.registry
             .registerViewFactory("lockbox/video_view", PlayerViewFactory(p))
+        flutterEngine.platformViewsController.registry
+            .registerViewFactory("lockbox/hdr_image", HdrImageFactory(this, messenger))
         MethodChannel(messenger, "lockbox/native").setMethodCallHandler { call, result ->
             try {
                 handle(call, result)
@@ -260,6 +262,7 @@ class MainActivity : FlutterActivity() {
                 val blob = call.argument<String>("blob")!!
                 val key = call.argument<ByteArray>("key")!!
                 val positionMs = (call.argument<Number>("positionMs") ?: 0).toLong()
+                val wantHdr = call.argument<Boolean>("hdr") == true && Build.VERSION.SDK_INT >= 34
                 background(result) {
                     // The phone's video decoder can be briefly busy (the
                     // player is using one too), so try a few times.
@@ -269,6 +272,17 @@ class MainActivity : FlutterActivity() {
                         val r = MediaMetadataRetriever()
                         try {
                             r.setDataSource(ds)
+                            if (wantHdr) {
+                                // Ask for a 10-bit frame so HDR highlights are kept.
+                                val params = MediaMetadataRetriever.BitmapParams().apply {
+                                    preferredConfig = Bitmap.Config.RGBA_1010102
+                                }
+                                val hb = r.getFrameAtTime(positionMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST, params)
+                                if (hb != null) {
+                                    val encoded = UltraHdr.encode(UltraHdr.toLinearF16(hb))
+                                    if (encoded != null) return@background encoded
+                                }
+                            }
                             val bmp = r.getFrameAtTime(positionMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
                             if (bmp != null) return@background jpeg(bmp, 95)
                             lastError = IllegalStateException("the decoder returned no picture")

@@ -16,6 +16,7 @@ import '../core/crypto.dart' show randomId;
 import '../core/library_query.dart';
 import '../core/media_server.dart';
 import '../core/models.dart';
+import '../core/ultra_hdr.dart';
 import '../core/vault.dart';
 import '../platform/native.dart';
 import '../platform/player.dart';
@@ -128,6 +129,16 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       v.removeInvalidAutoTags();
       v.data.settings.tagRulesVersion = 1;
       await v.save();
+    }
+    // One-time check of photos added before Ultra HDR support.
+    if (v.data.settings.hdrScanVersion < 1) {
+      unawaited(() async {
+        final found = await v.scanUltraHdrPhotos();
+        if (_vault != v) return;
+        v.data.settings.hdrScanVersion = 1;
+        if (found > 0) _invalidate();
+        await changed();
+      }());
     }
     if (!Native.isAndroid) {
       _server = await MediaServer.start(v.directory, v.masterKey.bytes);
@@ -386,6 +397,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       folderId: folder.id,
       tagIds: {...video.tagIds},
       note: 'Frame at ${formatClock(position)} of “${video.name}”',
+      hdr: looksUltraHdr(jpeg) ? HdrFormat.ultraHdr : HdrFormat.none,
     );
     v.data.items.add(item);
     await changed();

@@ -13,6 +13,7 @@ import 'package:image/image.dart' as img;
 import '../core/crypto.dart';
 import '../core/models.dart';
 import '../core/mp4_probe.dart';
+import '../core/ultra_hdr.dart';
 import '../core/vault.dart';
 import '../platform/native.dart';
 import '../platform/player.dart';
@@ -161,6 +162,11 @@ class Importer {
       }
       if (kind == MediaKind.photo) {
         final bytes = await File(opened.path).readAsBytes();
+        if (looksUltraHdr(bytes.length > 262144
+            ? Uint8List.sublistView(bytes, 0, 262144)
+            : bytes)) {
+          item.hdr = HdrFormat.ultraHdr;
+        }
         item.createdAt ??= await _exifDate(bytes);
         final dims = await imageSize(bytes);
         if (dims != null) {

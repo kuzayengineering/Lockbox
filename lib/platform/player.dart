@@ -16,7 +16,9 @@ import 'package:media_kit_video/media_kit_video.dart' as mkv;
 
 import '../core/media_server.dart';
 import '../core/models.dart';
+import '../core/ultra_hdr.dart';
 import '../core/vault.dart';
+import 'native.dart';
 
 @immutable
 class PlaybackState {
@@ -226,23 +228,35 @@ class _AndroidPlayer extends MediaPlayer {
   @override
   Future<Uint8List?> captureFrame(MediaItem item, Duration position,
       {bool allowInterrupt = true}) async {
-    // 1. Copy what's on screen (no second decoder needed).
+    // 1. Copy what's on screen (no second decoder needed). On Android 14+
+    //    this keeps HDR highlights and is saved as Ultra HDR.
+    Uint8List? shown;
     try {
-      final shown = await _ch.invokeMethod<Uint8List>('captureDisplayed');
-      if (shown != null && shown.isNotEmpty) return shown;
+      shown = await _ch.invokeMethod<Uint8List>('captureDisplayed');
     } catch (_) {}
+    final shownOk = shown != null && shown.isNotEmpty;
+    final wantHdr = item.hdr.isHdr && await Native.androidSdk() >= 34;
+    if (shownOk && (!allowInterrupt || !wantHdr || looksUltraHdr(shown))) {
+      return shown;
+    }
     if (!allowInterrupt) return null;
-    // 2. Free the player's decoder, extract the frame from the file,
-    //    then put the video back where it was (paused).
+    // 2. Free the player's decoder, extract the frame from the file (in HDR
+    //    if possible), then put the video back where it was (paused).
     final key = await _vault.fileKeyFor(item);
     await _ch.invokeMethod('suspendDecoders');
     try {
-      return await const MethodChannel('lockbox/native').invokeMethod<Uint8List>(
-          'grabFrame', {
+      final grabbed = await const MethodChannel('lockbox/native')
+          .invokeMethod<Uint8List>('grabFrame', {
         'blob': _vault.blobPath(item.blobId),
         'key': key,
         'positionMs': position.inMilliseconds,
+        'hdr': wantHdr,
       });
+      if (grabbed != null && (!shownOk || looksUltraHdr(grabbed))) return grabbed;
+      return shownOk ? shown : grabbed;
+    } catch (_) {
+      if (shownOk) return shown;
+      rethrow;
     } finally {
       key.fillRange(0, key.length, 0);
       await _ch.invokeMethod('resumeDecoders', {'ms': position.inMilliseconds});

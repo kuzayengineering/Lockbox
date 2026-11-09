@@ -14,6 +14,7 @@ import 'package:lockbox/core/library_query.dart';
 import 'package:lockbox/core/media_server.dart';
 import 'package:lockbox/core/models.dart';
 import 'package:lockbox/core/mp4_probe.dart';
+import 'package:lockbox/core/ultra_hdr.dart';
 import 'package:lockbox/core/vault.dart';
 import 'package:path/path.dart' as p;
 
@@ -448,6 +449,46 @@ void main() {
       expect(v.data.tags.map((t) => t.name), ['beach', 'sunset']);
       expect(item.tagIds.contains(existing.id), isTrue);
       expect(item.tagIds.length, 2);
+    });
+  });
+
+  group('ultra hdr', () {
+    Uint8List jpegWith(String text) => Uint8List.fromList(
+        [0xFF, 0xD8, 0xFF, 0xE1, ...text.codeUnits, ...List.filled(50, 0)]);
+
+    test('recognises gain-map JPEGs', () {
+      expect(looksUltraHdr(jpegWith('<x hdrgm:Version="1.0"/>')), isTrue);
+      expect(looksUltraHdr(jpegWith('urn:iso:std:iso:ts:21496:-1')), isTrue);
+      expect(looksUltraHdr(jpegWith('plain exif data')), isFalse);
+      expect(looksUltraHdr(Uint8List.fromList('hdrgm:'.codeUnits)), isFalse); // not a JPEG
+    });
+
+    test('scan marks existing Ultra HDR photos once', () async {
+      final v = await Vault.create(p.join(tmp.path, 'hv'), 'pw',
+          params: KdfParams.testing);
+      Future<MediaItem> add(String id, Uint8List bytes) async {
+        final f = File(p.join(tmp.path, '$id.jpg'))..writeAsBytesSync(bytes);
+        final i = MediaItem(
+            id: id,
+            blobId: await v.storeFile(f.path),
+            name: '$id.jpg',
+            kind: MediaKind.photo,
+            mimeType: 'image/jpeg',
+            sizeBytes: bytes.length,
+            addedAt: DateTime.now());
+        v.data.items.add(i);
+        return i;
+      }
+
+      final hdr = await add('a', jpegWith('<x hdrgm:Version="1.0"/>'));
+      final sdr = await add('b', jpegWith('nothing special'));
+      expect(await v.scanUltraHdrPhotos(), 1);
+      expect(hdr.hdr, HdrFormat.ultraHdr);
+      expect(sdr.hdr, HdrFormat.none);
+      expect(await v.scanUltraHdrPhotos(), 0);
+      expect(
+          const LibraryQuery(hdrOnly: true).apply(v.data.items).map((i) => i.id),
+          ['a']);
     });
   });
 

@@ -8,6 +8,9 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -180,6 +183,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
                       MediaKind.photo => _PhotoPage(
                           key: ValueKey(it.id),
                           item: it,
+                          active: active,
                           onTap: () => _setChrome(!_chrome),
                           onZoomChanged: (z) => setState(() => _zoomed = z),
                         ),
@@ -283,8 +287,14 @@ class _ViewerScreenState extends State<ViewerScreen> {
 // ------------------------------------------------------------------ pages
 
 class _PhotoPage extends StatefulWidget {
-  const _PhotoPage({super.key, required this.item, required this.onTap, required this.onZoomChanged});
+  const _PhotoPage(
+      {super.key,
+      required this.item,
+      required this.active,
+      required this.onTap,
+      required this.onZoomChanged});
   final MediaItem item;
+  final bool active;
   final VoidCallback onTap;
   final ValueChanged<bool> onZoomChanged;
 
@@ -302,12 +312,36 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
   Animation<Matrix4>? _zoomAnim;
   Offset _tapPos = Offset.zero;
   bool _zoomed = false;
+  bool _hdrCapable = false;
+  bool _hdrSendQueued = false;
+
+  /// Keeps the native HDR view's zoom/pan in step with Flutter's (at most
+  /// once per frame).
+  void _sendHdrTransform() {
+    if (!_hdrCapable || _hdrSendQueued) return;
+    _hdrSendQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _hdrSendQueued = false;
+      if (!mounted) return;
+      final m = _tc.value;
+      final dpr = MediaQuery.of(context).devicePixelRatio;
+      Native.setHdrTransform(
+          m.getMaxScaleOnAxis(), m.storage[12] * dpr, m.storage[13] * dpr);
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
 
   @override
   void initState() {
     super.initState();
     _anim.addListener(() => _tc.value = _zoomAnim!.value);
+    if (widget.item.hdr == HdrFormat.ultraHdr) {
+      Native.hdrPhotoDisplay().then((ok) {
+        if (mounted && ok) setState(() => _hdrCapable = true);
+      });
+    }
     _tc.addListener(() {
+      _sendHdrTransform();
       final z = _tc.value.getMaxScaleOnAxis() > 1.01;
       if (z != _zoomed) {
         _zoomed = z;
@@ -387,7 +421,7 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
         },
       );
     }
-    return GestureDetector(
+    final viewer = GestureDetector(
       onTap: widget.onTap,
       onDoubleTapDown: (d) => _tapPos = d.localPosition,
       onDoubleTap: _toggleZoom,
@@ -398,7 +432,46 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
         child: SizedBox.expand(child: Hero(tag: 'media-${widget.item.id}', child: content)),
       ),
     );
+    // Ultra HDR photo on an HDR phone: the native view draws the real HDR
+    // picture on top; Flutter still handles all gestures underneath.
+    if (!_hdrCapable || !widget.active || _full == null) return viewer;
+    return Stack(fit: StackFit.expand, children: [
+      viewer,
+      IgnorePointer(child: _HdrPhotoView(bytes: _full!, onCreated: _sendHdrTransform)),
+    ]);
   }
+}
+
+/// Android native view that shows an Ultra HDR photo in real HDR.
+class _HdrPhotoView extends StatelessWidget {
+  const _HdrPhotoView({required this.bytes, required this.onCreated});
+  final Uint8List bytes;
+  final VoidCallback onCreated;
+
+  @override
+  Widget build(BuildContext context) => PlatformViewLink(
+        viewType: 'lockbox/hdr_image',
+        surfaceFactory: (context, controller) => AndroidViewSurface(
+          controller: controller as AndroidViewController,
+          gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
+          hitTestBehavior: PlatformViewHitTestBehavior.transparent,
+        ),
+        onCreatePlatformView: (params) {
+          final c = PlatformViewsService.initExpensiveAndroidView(
+            id: params.id,
+            viewType: 'lockbox/hdr_image',
+            layoutDirection: TextDirection.ltr,
+            creationParams: {'bytes': bytes},
+            creationParamsCodec: const StandardMessageCodec(),
+          );
+          c.addOnPlatformViewCreatedListener((id) {
+            params.onPlatformViewCreated(id);
+            onCreated();
+          });
+          c.create();
+          return c;
+        },
+      );
 }
 
 class _VideoPage extends StatefulWidget {

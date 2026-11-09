@@ -451,7 +451,12 @@ class _Tile extends StatelessWidget {
             top: 4,
             left: 4,
             child: Row(children: [
-              if (item.hdr.isHdr) Badge2(item.hdr == HdrFormat.dolbyVision ? 'DV' : item.hdr.label),
+              if (item.hdr.isHdr)
+                Badge2(switch (item.hdr) {
+                  HdrFormat.dolbyVision => 'DV',
+                  HdrFormat.ultraHdr => 'HDR',
+                  _ => item.hdr.label,
+                }),
               if (item.hdr.isHdr && item.isHighFrameRate) const SizedBox(width: 3),
               if (item.isHighFrameRate) Badge2('${item.fps!.round()}'),
             ]),

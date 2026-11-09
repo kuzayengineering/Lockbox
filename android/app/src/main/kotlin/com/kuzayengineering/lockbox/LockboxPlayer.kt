@@ -3,7 +3,9 @@ package com.kuzayengineering.lockbox
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.ColorSpace
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.PixelCopy
@@ -208,21 +210,38 @@ class LockboxPlayer(
         val portrait = sv.height > sv.width
         val w = if (long > 0) (if (portrait) short else long) else sv.width
         val h = if (long > 0) (if (portrait) long else short) else sv.height
+        // Android 14+: copy in half-float so HDR highlights survive, then
+        // save as Ultra HDR. Older phones: a normal 8-bit copy.
+        val hdrCapture = Build.VERSION.SDK_INT >= 34
         val bmp = try {
-            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            if (hdrCapture) {
+                Bitmap.createBitmap(w, h, Bitmap.Config.RGBA_F16, false,
+                    ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB))
+            } else {
+                Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            }
         } catch (e: OutOfMemoryError) {
             result.success(null)
             return
         }
         try {
             PixelCopy.request(sv, bmp, { code ->
-                if (code != PixelCopy.SUCCESS || looksBlank(bmp)) {
+                if (code != PixelCopy.SUCCESS || (!hdrCapture && looksBlank(bmp))) {
                     result.success(null)
                 } else {
                     Thread {
-                        val out = ByteArrayOutputStream()
-                        bmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                        handler.post { result.success(out.toByteArray()) }
+                        val bytes = try {
+                            if (hdrCapture) {
+                                UltraHdr.encode(bmp)
+                            } else {
+                                val out = ByteArrayOutputStream()
+                                bmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                out.toByteArray()
+                            }
+                        } catch (e: Throwable) {
+                            null
+                        }
+                        handler.post { result.success(bytes) }
                     }.start()
                 }
             }, handler)

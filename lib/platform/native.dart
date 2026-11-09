@@ -41,6 +41,26 @@ class Native {
   static const _ch = MethodChannel('lockbox/native');
   static bool get isAndroid => Platform.isAndroid;
 
+  static const _hdr = MethodChannel('lockbox/hdr');
+  static Future<int>? _sdk;
+  static Future<bool>? _hdrDisplay;
+
+  /// Android version number (API level); 0 on Windows.
+  static Future<int> androidSdk() => _sdk ??= isAndroid
+      ? _hdr.invokeMethod<int>('sdk').then((v) => v ?? 0, onError: (_) => 0)
+      : Future.value(0);
+
+  /// True if this phone can show Ultra HDR photos in HDR.
+  static Future<bool> hdrPhotoDisplay() => _hdrDisplay ??= isAndroid
+      ? _hdr
+          .invokeMethod<bool>('capable')
+          .then((v) => v ?? false, onError: (_) => false)
+      : Future.value(false);
+
+  /// Sends the photo viewer's zoom/pan (in physical pixels) to the HDR view.
+  static Future<void> setHdrTransform(double scale, double tx, double ty) =>
+      _hdr.invokeMethod('setTransform', {'scale': scale, 'tx': tx, 'ty': ty});
+
   static const mediaExtensions = [
     'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'avif', 'dng',
     'mp4', 'mov', 'm4v', 'mkv', 'webm', '3gp', 'avi', 'ts', 'mts', 'm2ts',

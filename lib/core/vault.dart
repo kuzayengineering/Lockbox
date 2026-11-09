@@ -35,6 +35,7 @@ import 'auto_tag.dart';
 import 'blob_format.dart';
 import 'crypto.dart';
 import 'models.dart';
+import 'ultra_hdr.dart';
 
 const List<int> kIndexMagic = [0x4C, 0x42, 0x58, 0x49]; // "LBXI"
 const int kIndexVersion = 1;
@@ -466,6 +467,30 @@ class Vault {
     for (final w in tagWordsFromFileName(item.name)) {
       item.tagIds.add(tagNamed(w).id);
     }
+  }
+
+  /// Marks existing JPEG photos that are Ultra HDR (reads only the start of
+  /// each file). Returns how many were found.
+  Future<int> scanUltraHdrPhotos() async {
+    var found = 0;
+    for (final i in [...data.items]) {
+      if (i.kind != MediaKind.photo || i.hdr != HdrFormat.none) continue;
+      if (i.mimeType != 'image/jpeg') continue;
+      BlobReader? r;
+      try {
+        r = await BlobReader.open(blobPath(i.blobId), masterKey);
+        final head = await r.read(0, r.length < 262144 ? r.length : 262144);
+        if (looksUltraHdr(head)) {
+          i.hdr = HdrFormat.ultraHdr;
+          found++;
+        }
+      } catch (_) {
+        // unreadable file: leave as is
+      } finally {
+        await r?.close();
+      }
+    }
+    return found;
   }
 
   /// Removes tags that were created automatically under the old, looser
