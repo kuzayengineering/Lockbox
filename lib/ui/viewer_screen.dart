@@ -711,7 +711,13 @@ class _PlaybackBarState extends State<_PlaybackBar> {
     try {
       final saved = await app.saveFrame(widget.item, at);
       if (!mounted) return;
-      snack(context, saved == null ? 'Couldn\'t capture this frame – please try again' : 'Frame saved to Screenshots in Lockbox');
+      snack(
+          context,
+          saved == null
+              ? 'Couldn\'t capture this frame – please try again'
+              : saved.hdr == HdrFormat.ultraHdr
+                  ? 'Frame saved to Screenshots in Lockbox (Ultra HDR)'
+                  : 'Frame saved to Screenshots in Lockbox');
     } catch (e) {
       final msg = e is PlatformException ? (e.message ?? e.code) : e.toString();
       if (mounted) snack(context, 'Couldn\'t capture this frame: $msg');
