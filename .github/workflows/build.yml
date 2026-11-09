@@ -1,6 +1,7 @@
 # Builds Lockbox for Android and Windows on every push to main, runs the
-# tests, and publishes the files on the repository's Releases page as
-# "Latest build".
+# tests, and publishes a numbered release (v1.0.<build number>) on the
+# repository's Releases page. Obtainium watches these releases to update
+# the Android app. Only the 5 newest releases are kept.
 #
 # Android signing: add two repository secrets (Settings > Secrets and
 # variables > Actions):
@@ -19,6 +20,8 @@ permissions:
 
 env:
   FLUTTER_VERSION: "3.47.9"
+  VERSION: "1.0.${{ github.run_number }}"
+  BUILD_NUMBER: "${{ github.run_number }}"
 
 jobs:
   test:
@@ -64,7 +67,10 @@ jobs:
             echo "name=Lockbox-android-TEST-ONLY.apk" >> "$GITHUB_OUTPUT"
           fi
       - run: flutter pub get
-      - run: flutter build apk --release
+      - run: >
+          flutter build apk --release
+          --build-name=$VERSION --build-number=$BUILD_NUMBER
+          --dart-define=LOCKBOX_VERSION=$VERSION
       - run: cp build/app/outputs/flutter-apk/app-release.apk "${{ steps.key.outputs.name }}"
       - run: rm -f android/key.properties android/app/lockbox-release.jks
       - uses: actions/upload-artifact@v4
@@ -82,7 +88,10 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter build windows --release
+      - run: >
+          flutter build windows --release
+          --build-name=${{ env.VERSION }} --build-number=${{ env.BUILD_NUMBER }}
+          --dart-define=LOCKBOX_VERSION=${{ env.VERSION }}
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath Lockbox-windows.zip
@@ -99,11 +108,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      - name: Publish "Latest build"
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest-build --cleanup-tag -y || true
-          gh release create latest-build Lockbox-android*.apk Lockbox-windows.zip \
-            --prerelease --title "Latest build" \
+          gh release create "v$VERSION" Lockbox-android*.apk Lockbox-windows.zip \
+            --target "$GITHUB_SHA" --latest --title "Lockbox $VERSION" \
             --notes "Built automatically from commit ${GITHUB_SHA::7} on $(date -u +'%Y-%m-%d %H:%M UTC')."
+      - name: Keep only the 5 newest releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
+          while read -r tag; do gh release delete "$tag" --cleanup-tag -y; done

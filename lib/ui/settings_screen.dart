@@ -156,6 +156,11 @@ class SettingsScreen extends StatelessWidget {
 
             section('About'),
             const ListTile(
+              leading: Icon(Icons.info_outline),
+              title: Text('Version'),
+              subtitle: Text(String.fromEnvironment('LOCKBOX_VERSION', defaultValue: 'development build')),
+            ),
+            const ListTile(
               leading: Icon(Icons.shield_outlined),
               title: Text('How your files are protected'),
               subtitle: Text(

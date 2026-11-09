@@ -63,12 +63,21 @@ there are no accounts or cloud servers.
 
 ## Getting the app
 
-Each update to the `main` branch is built automatically. Download the latest
-files from the repository's **Releases** page under **Latest build**:
+Each update to the `main` branch is built automatically and published as a
+numbered release (Lockbox 1.0.1, 1.0.2, …) on the repository's **Releases**
+page. The five newest are kept:
 
 - `Lockbox-android.apk`: install on the phone (allow "install unknown apps"
   for your browser or file manager when asked).
 - `Lockbox-windows.zip`: unzip anywhere and run `lockbox.exe`.
+
+### Automatic updates on Android (Obtainium)
+
+Lockbox itself has no internet access, so it can't check for updates. The
+free app [Obtainium](https://github.com/ImranR98/Obtainium) does it instead:
+it watches this repository's releases (using a read-only GitHub token stored
+in Obtainium, not in Lockbox), notifies you of new versions and installs them.
+The installed version is shown in Lockbox under *Settings › About*.
 
 ### One-time setup: Android signing key (important)
 
