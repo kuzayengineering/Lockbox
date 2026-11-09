@@ -570,7 +570,8 @@ class _Sidebar extends StatelessWidget {
     return SafeArea(
       child: ListView(padding: EdgeInsets.zero, children: [
         ListTile(
-          leading: Icon(Icons.lock_rounded, color: Theme.of(context).colorScheme.primary),
+          leading: Image.asset('assets/icon/emblem.png',
+              width: 40, height: 40, filterQuality: FilterQuality.medium),
           title: Text('Lockbox', style: Theme.of(context).textTheme.titleLarge),
           subtitle: Text('${data.items.length} items · ${formatBytes(totalSize)}'),
         ),

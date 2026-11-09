@@ -83,7 +83,10 @@ class _LockScreenState extends State<LockScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Icon(Icons.lock_rounded, size: 72, color: theme.colorScheme.primary),
+                  Center(
+                    child: Image.asset('assets/icon/emblem.png',
+                        height: 140, filterQuality: FilterQuality.medium),
+                  ),
                   const SizedBox(height: 12),
                   Text('Lockbox',
                       textAlign: TextAlign.center, style: theme.textTheme.headlineMedium),
