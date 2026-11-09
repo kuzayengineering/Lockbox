@@ -125,6 +125,18 @@ class LockboxPlayer(
                     sendState()
                     result.success(null)
                 }
+                // Scrubbing mode: the player is tuned for many rapid seeks so
+                // frames update in real time while the scrub bar is dragged.
+                "scrubStart" -> {
+                    val p = ensurePlayer()
+                    p.setScrubbingModeEnabled(true)
+                    result.success(null)
+                }
+                "scrubEnd" -> {
+                    player?.setScrubbingModeEnabled(false)
+                    sendState()
+                    result.success(null)
+                }
                 "speed" -> {
                     val s = (call.argument<Number>("speed") ?: 1.0).toFloat()
                     player?.setPlaybackParameters(PlaybackParameters(s))

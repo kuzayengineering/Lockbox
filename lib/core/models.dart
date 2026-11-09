@@ -191,6 +191,7 @@ class VaultSettings {
     this.deleteOriginalsOnImport = true,
     this.keepCopyOnRestore = false,
     this.autoTagFromNames = true,
+    this.tagRulesVersion = 0,
   });
 
   /// How long the app may be in the background before it locks.
@@ -215,6 +216,9 @@ class VaultSettings {
   /// Add tags from the words in a file's name when it is imported.
   bool autoTagFromNames;
 
+  /// Which clean-up of automatic tags has already run (see AppState).
+  int tagRulesVersion;
+
   Map<String, dynamic> toJson() => {
         'autoLock': autoLockSeconds,
         'cols': gridColumns,
@@ -225,6 +229,7 @@ class VaultSettings {
         'delOrig': deleteOriginalsOnImport,
         'keepOnRestore': keepCopyOnRestore,
         'autoTag': autoTagFromNames,
+        'tagRules': tagRulesVersion,
       };
 
   factory VaultSettings.fromJson(Map<String, dynamic>? j) => VaultSettings(
@@ -237,6 +242,7 @@ class VaultSettings {
         deleteOriginalsOnImport: (j?['delOrig'] as bool?) ?? true,
         keepCopyOnRestore: (j?['keepOnRestore'] as bool?) ?? false,
         autoTagFromNames: (j?['autoTag'] as bool?) ?? true,
+        tagRulesVersion: (j?['tagRules'] as int?) ?? 0,
       );
 }
 

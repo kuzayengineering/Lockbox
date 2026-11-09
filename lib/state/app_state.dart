@@ -122,6 +122,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _opened(Vault v) async {
     _vault = v;
+    // One-time clean-up of tags like "PXL_2026110612030045" that the first
+    // version of the file-name rule created.
+    if (v.data.settings.tagRulesVersion < 1) {
+      v.removeInvalidAutoTags();
+      v.data.settings.tagRulesVersion = 1;
+      await v.save();
+    }
     if (!Native.isAndroid) {
       _server = await MediaServer.start(v.directory, v.masterKey.bytes);
     }

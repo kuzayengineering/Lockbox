@@ -95,6 +95,12 @@ abstract class MediaPlayer {
   /// The video picture. Only one should be on screen at a time.
   Widget buildView();
 
+  /// Call when the user starts / stops dragging the scrub bar. In between,
+  /// call [scrubTo] for every movement: frames update in real time.
+  Future<void> beginScrub();
+  Future<void> scrubTo(Duration to);
+  Future<void> endScrub(Duration finalPosition);
+
   /// JPEG of the video frame at [position] (the paused frame).
   Future<Uint8List?> captureFrame(MediaItem item, Duration position);
 
@@ -188,6 +194,16 @@ class _AndroidPlayer extends MediaPlayer {
   @override
   Future<void> setSpeed(double speed) =>
       _ch.invokeMethod('speed', {'speed': speed});
+
+  @override
+  Future<void> beginScrub() => _ch.invokeMethod('scrubStart');
+  @override
+  Future<void> scrubTo(Duration to) => seek(to);
+  @override
+  Future<void> endScrub(Duration finalPosition) async {
+    await seek(finalPosition);
+    await _ch.invokeMethod('scrubEnd');
+  }
   @override
   Future<void> setVolume(double volume) =>
       _ch.invokeMethod('volume', {'volume': volume});
@@ -303,6 +319,43 @@ class _MpvPlayer extends MediaPlayer {
   Future<void> seek(Duration to) => _p.seek(to);
   @override
   Future<void> setSpeed(double speed) => _p.setRate(speed);
+
+  // While dragging, jump to the nearest keyframe (instant), skipping
+  // requests that arrive while one is still being processed; the exact
+  // frame is shown when the finger/mouse is released.
+  bool _scrubBusy = false;
+  Duration? _scrubPending;
+
+  @override
+  Future<void> beginScrub() async {}
+
+  @override
+  Future<void> scrubTo(Duration to) async {
+    _scrubPending = to;
+    if (_scrubBusy) return;
+    _scrubBusy = true;
+    try {
+      while (_scrubPending != null) {
+        final t = _scrubPending!;
+        _scrubPending = null;
+        final native = _p.platform;
+        if (native is mk.NativePlayer) {
+          await native.command(
+              ['seek', (t.inMilliseconds / 1000).toStringAsFixed(3), 'absolute+keyframes']);
+        } else {
+          await _p.seek(t);
+        }
+      }
+    } finally {
+      _scrubBusy = false;
+    }
+  }
+
+  @override
+  Future<void> endScrub(Duration finalPosition) async {
+    _scrubPending = null;
+    await _p.seek(finalPosition);
+  }
   @override
   Future<void> setVolume(double volume) => _p.setVolume(volume * 100);
   @override

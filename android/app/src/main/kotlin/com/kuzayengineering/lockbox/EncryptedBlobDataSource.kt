@@ -53,6 +53,7 @@ class EncryptedBlobDataSource(
 
     private var cachedIndex = -1L
     private var cached = ByteArray(0)
+    private var ctBuffer = ByteArray(0)
     private var cachedLength = 0
 
     override fun open(dataSpec: DataSpec): Long {
@@ -73,7 +74,8 @@ class EncryptedBlobDataSource(
             header16 = header.copyOfRange(0, 16)
             plainLength = ByteBuffer.wrap(header, 8, 8).order(ByteOrder.LITTLE_ENDIAN).long
             chunkCount = if (plainLength == 0L) 1 else (plainLength + chunkSize - 1) / chunkSize
-            if (cached.size < chunkSize) cached = ByteArray(chunkSize + TAG_LENGTH)
+            if (cached.size < chunkSize + TAG_LENGTH) cached = ByteArray(chunkSize + TAG_LENGTH)
+            if (ctBuffer.size < chunkSize + TAG_LENGTH) ctBuffer = ByteArray(chunkSize + TAG_LENGTH)
         } catch (e: IOException) {
             throw DataSourceException(e, PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
         }
@@ -97,9 +99,10 @@ class EncryptedBlobDataSource(
         val last = index == chunkCount - 1
         val plainLen = if (last) (plainLength - index * chunkSize).toInt() else chunkSize
         val offset = HEADER_LENGTH.toLong() + index * (chunkSize + TAG_LENGTH)
-        val ct = ByteArray(plainLen + TAG_LENGTH)
+        val ctLen = plainLen + TAG_LENGTH
+        val ct = ctBuffer
         f.seek(offset)
-        f.readFully(ct)
+        f.readFully(ct, 0, ctLen)
 
         val nonce = ByteArray(12)
         ByteBuffer.wrap(nonce, 4, 8).order(ByteOrder.BIG_ENDIAN).putLong(index)
@@ -111,7 +114,7 @@ class EncryptedBlobDataSource(
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, nonce))
         cipher.updateAAD(aad)
         val n = try {
-            cipher.doFinal(ct, 0, ct.size, cached, 0)
+            cipher.doFinal(ct, 0, ctLen, cached, 0)
         } catch (e: Exception) {
             throw IOException("Integrity check failed", e)
         }

@@ -393,14 +393,43 @@ void main() {
   });
 
   group('auto tags', () {
-    test('words from file names, numbers ignored', () {
+    test('words from file names: spaces needed, digits/underscores ignored', () {
       expect(tagWordsFromFileName('Beach trip with Sam 2024 (2).mp4'),
           ['Beach', 'trip', 'with', 'Sam']);
-      expect(tagWordsFromFileName('IMG_20240101_123456.jpg'),
-          ['IMG_20240101_123456']);
+      // Phone camera names: no spaces -> no tags at all.
+      expect(tagWordsFromFileName('PXL_2026110612030045.mp4'), isEmpty);
+      expect(tagWordsFromFileName('IMG_20240101_123456.jpg'), isEmpty);
+      expect(tagWordsFromFileName('Beach.jpg'), isEmpty);
+      // Words with digits or underscores are skipped, the rest kept.
+      expect(tagWordsFromFileName('PXL_20261106 Sam birthday.mp4'), ['Sam', 'birthday']);
+      expect(tagWordsFromFileName('4K HDR clip.mov'), ['HDR', 'clip']);
       expect(tagWordsFromFileName('20240101 123456.jpg'), isEmpty);
       expect(tagWordsFromFileName('Dog  dog - DOG, park.heic'), ['Dog', 'park']);
-      expect(tagWordsFromFileName('4K HDR clip.mov'), ['4K', 'HDR', 'clip']);
+      expect(tagWordsFromFileName("Jean-Luc's party.jpg"), ["Jean-Luc's", 'party']);
+    });
+
+    test('clean-up removes old auto tags with digits, keeps hand-made ones', () async {
+      final v = await Vault.create(p.join(tmp.path, 'v2'), 'pw',
+          params: KdfParams.testing);
+      MediaItem item(String id, String name) => MediaItem(
+          id: id,
+          blobId: id,
+          name: name,
+          kind: MediaKind.video,
+          mimeType: 'video/mp4',
+          sizeBytes: 1,
+          addedAt: DateTime.now());
+      final a = item('a', 'PXL_2026110612030045.mp4');
+      final b = item('b', 'Holiday.mp4');
+      v.data.items.addAll([a, b]);
+      final bad = v.createTag('PXL_2026110612030045');
+      final manual = v.createTag('Trip 2024'); // made by hand, has a digit
+      final good = v.createTag('Holiday');
+      a.tagIds.addAll({bad.id, manual.id});
+      b.tagIds.addAll({good.id, manual.id});
+      expect(v.removeInvalidAutoTags(), 1);
+      expect(v.data.tags.map((t) => t.name), ['Trip 2024', 'Holiday']);
+      expect(a.tagIds, {manual.id});
     });
 
     test('reuses existing tags regardless of case', () async {

@@ -76,7 +76,7 @@ flutter {
 dependencies {
     // Google's official media player. Plays HDR10 / HLG / Dolby Vision and
     // high-frame-rate video with the phone's hardware decoders.
-    val media3 = "1.8.0"
+    val media3 = "1.11.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-ui:$media3")
 }

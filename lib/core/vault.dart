@@ -468,6 +468,32 @@ class Vault {
     }
   }
 
+  /// Removes tags that were created automatically under the old, looser
+  /// file-name rule but contain digits or underscores (e.g.
+  /// "PXL_2026110612030045"). A tag is only removed if every item carrying
+  /// it has that exact word in its file name, so tags made by hand are kept.
+  /// Returns how many tags were removed.
+  int removeInvalidAutoTags() {
+    var removed = 0;
+    for (final tag in [...data.tags]) {
+      if (!isInvalidAutoTagName(tag.name)) continue;
+      final lower = tag.name.toLowerCase();
+      final holders = data.items.where((i) => i.tagIds.contains(tag.id));
+      final allFromNames = holders.every((i) {
+        var base = i.name;
+        final dot = base.lastIndexOf('.');
+        if (dot > 0) base = base.substring(0, dot);
+        return base
+            .split(RegExp(r'\s+'))
+            .any((w) => w.toLowerCase().contains(lower));
+      });
+      if (holders.isEmpty || !allFromNames) continue;
+      deleteTag(tag.id);
+      removed++;
+    }
+    return removed;
+  }
+
   void deleteTag(String tagId) {
     data.tags.removeWhere((t) => t.id == tagId);
     for (final i in data.items) {

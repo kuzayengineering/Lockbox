@@ -671,14 +671,15 @@ class _PlaybackBarState extends State<_PlaybackBar> {
                       onChangeStart: (v) {
                         _wasPlaying = s.playing;
                         player.pause();
+                        player.beginScrub();
                         setState(() => _scrub = v);
                       },
                       onChanged: (v) {
                         setState(() => _scrub = v);
-                        player.seek(Duration(milliseconds: v.round()));
+                        player.scrubTo(Duration(milliseconds: v.round()));
                       },
                       onChangeEnd: (v) async {
-                        await player.seek(Duration(milliseconds: v.round()));
+                        await player.endScrub(Duration(milliseconds: v.round()));
                         if (_wasPlaying) await player.play();
                         setState(() => _scrub = null);
                         widget.onInteract();
