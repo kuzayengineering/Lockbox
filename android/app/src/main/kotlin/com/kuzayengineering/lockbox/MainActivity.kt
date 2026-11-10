@@ -25,6 +25,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.InputStream
 import androidx.media3.datasource.DataSourceInputStream
 import androidx.media3.datasource.DataSpec
@@ -41,7 +42,27 @@ class MainActivity : FlutterActivity() {
     private val nextRequest = AtomicInteger(4000)
 
     /** Files opened for import, by handle id. */
-    private class ImportHandle(val uri: Uri, val pfd: ParcelFileDescriptor?, val temp: File?, val path: String)
+    /**
+     * A picked file opened for Dart. [path] is either "/proc/self/fd/N" (read
+     * the original directly, no copy) or a temporary copy in the app's private
+     * cache when Android doesn't allow the direct route for that storage.
+     * [writeBack]: temporary file to be copied to [uri] when closed (backups).
+     */
+    private class ImportHandle(
+        val uri: Uri,
+        val pfd: ParcelFileDescriptor?,
+        val temp: File?,
+        val path: String,
+        val writeBack: Boolean = false,
+    )
+
+    /** Can Dart open this "/proc/self/fd" path? Some storage providers refuse. */
+    private fun canOpen(path: String, forWrite: Boolean): Boolean = try {
+        if (forWrite) FileOutputStream(File(path), true).close() else FileInputStream(File(path)).use { it.read() }
+        true
+    } catch (_: Exception) {
+        false
+    }
     private val imports = HashMap<Int, ImportHandle>()
     private val nextHandle = AtomicInteger(1)
 
@@ -227,6 +248,16 @@ class MainActivity : FlutterActivity() {
 
     private fun closeHandle(h: ImportHandle, deleteOriginal: Boolean): Boolean {
         try { h.pfd?.close() } catch (_: Exception) {}
+        if (h.writeBack && h.temp != null) {
+            try {
+                contentResolver.openOutputStream(h.uri, "wt")!!.use { out ->
+                    FileInputStream(h.temp).use { it.copyTo(out, 1 shl 20) }
+                }
+            } finally {
+                h.temp.delete()
+            }
+            return true
+        }
         h.temp?.delete()
         if (!deleteOriginal) return false
         return try {
@@ -351,11 +382,14 @@ class MainActivity : FlutterActivity() {
                     try {
                         pfd = contentResolver.openFileDescriptor(uri, "r")
                     } catch (_: Exception) {}
-                    val handle: ImportHandle = if (pfd != null && pfd.statSize >= 0) {
-                        ImportHandle(uri, pfd, null, "/proc/self/fd/${pfd.fd}")
+                    val direct = pfd != null && pfd.statSize >= 0 &&
+                        canOpen("/proc/self/fd/${pfd.fd}", forWrite = false)
+                    val handle: ImportHandle = if (direct) {
+                        ImportHandle(uri, pfd, null, "/proc/self/fd/${pfd!!.fd}")
                     } else {
                         try { pfd?.close() } catch (_: Exception) {}
-                        // Not a seekable file (e.g. a cloud provider): copy it.
+                        // Direct reading isn't allowed for this storage (or it's a
+                        // cloud file): copy into private cache; deleted when closed.
                         val tmp = File.createTempFile("import", ".bin", cacheDir)
                         contentResolver.openInputStream(uri)!!.use { input ->
                             tmp.outputStream().use { input.copyTo(it, 1 shl 20) }
@@ -460,9 +494,18 @@ class MainActivity : FlutterActivity() {
                     background(result) {
                         val pfd = contentResolver.openFileDescriptor(uri, "wt")
                             ?: throw IllegalStateException("Cannot write there")
+                        val direct = canOpen("/proc/self/fd/${pfd.fd}", forWrite = true)
+                        val handle = if (direct) {
+                            ImportHandle(uri, pfd, null, "/proc/self/fd/${pfd.fd}")
+                        } else {
+                            // Write to private cache first, copy over when closed.
+                            try { pfd.close() } catch (_: Exception) {}
+                            val tmp = File.createTempFile("backup", ".lockbox", cacheDir)
+                            ImportHandle(uri, null, tmp, tmp.absolutePath, writeBack = true)
+                        }
                         val id = nextHandle.incrementAndGet()
-                        synchronized(imports) { imports[id] = ImportHandle(uri, pfd, null, "/proc/self/fd/${pfd.fd}") }
-                        mapOf("handle" to id, "path" to "/proc/self/fd/${pfd.fd}")
+                        synchronized(imports) { imports[id] = handle }
+                        mapOf("handle" to id, "path" to handle.path)
                     }
                 }
             }
