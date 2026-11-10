@@ -263,7 +263,23 @@ class MainActivity : FlutterActivity() {
                 val key = call.argument<ByteArray>("key")!!
                 val positionMs = (call.argument<Number>("positionMs") ?: 0).toLong()
                 val wantHdr = call.argument<Boolean>("hdr") == true && Build.VERSION.SDK_INT >= 34
+                val hint = call.argument<String>("transfer") ?: "hlg"
                 background(result) {
+                    // HDR video: decode the original 10-bit frame and save it
+                    // as an Ultra HDR photo.
+                    if (wantHdr) {
+                        val ds = EncryptedMediaDataSource(File(blob), key)
+                        try {
+                            val f = HdrFrameDecoder.decode(ds, positionMs * 1000, hint)
+                            if (f != null) {
+                                val bytes = UltraHdr.encodeHalfs(f.px, f.width, f.height)
+                                if (bytes != null) return@background bytes
+                            }
+                        } catch (_: Throwable) {
+                        } finally {
+                            try { ds.close() } catch (_: Exception) {}
+                        }
+                    }
                     // The phone's video decoder can be briefly busy (the
                     // player is using one too), so try a few times.
                     var lastError: Exception? = null
@@ -272,17 +288,6 @@ class MainActivity : FlutterActivity() {
                         val r = MediaMetadataRetriever()
                         try {
                             r.setDataSource(ds)
-                            if (wantHdr) {
-                                // Ask for a 10-bit frame so HDR highlights are kept.
-                                val params = MediaMetadataRetriever.BitmapParams().apply {
-                                    preferredConfig = Bitmap.Config.RGBA_1010102
-                                }
-                                val hb = r.getFrameAtTime(positionMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST, params)
-                                if (hb != null) {
-                                    val encoded = UltraHdr.encode(UltraHdr.toLinearF16(hb))
-                                    if (encoded != null) return@background encoded
-                                }
-                            }
                             val bmp = r.getFrameAtTime(positionMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
                             if (bmp != null) return@background jpeg(bmp, 95)
                             lastError = IllegalStateException("the decoder returned no picture")

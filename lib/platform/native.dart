@@ -57,10 +57,6 @@ class Native {
           .then((v) => v ?? false, onError: (_) => false)
       : Future.value(false);
 
-  /// Sends the photo viewer's zoom/pan (in physical pixels) to the HDR view.
-  static Future<void> setHdrTransform(double scale, double tx, double ty) =>
-      _hdr.invokeMethod('setTransform', {'scale': scale, 'tx': tx, 'ty': ty});
-
   static const mediaExtensions = [
     'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'avif', 'dng',
     'mp4', 'mov', 'm4v', 'mkv', 'webm', '3gp', 'avi', 'ts', 'mts', 'm2ts',

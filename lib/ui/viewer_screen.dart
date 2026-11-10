@@ -313,23 +313,6 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
   Offset _tapPos = Offset.zero;
   bool _zoomed = false;
   bool _hdrCapable = false;
-  bool _hdrSendQueued = false;
-
-  /// Keeps the native HDR view's zoom/pan in step with Flutter's (at most
-  /// once per frame).
-  void _sendHdrTransform() {
-    if (!_hdrCapable || _hdrSendQueued) return;
-    _hdrSendQueued = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _hdrSendQueued = false;
-      if (!mounted) return;
-      final m = _tc.value;
-      final dpr = MediaQuery.of(context).devicePixelRatio;
-      Native.setHdrTransform(
-          m.getMaxScaleOnAxis(), m.storage[12] * dpr, m.storage[13] * dpr);
-    });
-    WidgetsBinding.instance.scheduleFrame();
-  }
 
   @override
   void initState() {
@@ -341,10 +324,9 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
       });
     }
     _tc.addListener(() {
-      _sendHdrTransform();
       final z = _tc.value.getMaxScaleOnAxis() > 1.01;
       if (z != _zoomed) {
-        _zoomed = z;
+        setState(() => _zoomed = z);
         widget.onZoomChanged(z);
       }
     });
@@ -433,20 +415,20 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
       ),
     );
     // Ultra HDR photo on an HDR phone: the native view draws the real HDR
-    // picture on top; Flutter still handles all gestures underneath.
-    if (!_hdrCapable || !widget.active || _full == null) return viewer;
+    // picture on top while not zoomed; Flutter handles all gestures. While
+    // zoomed in, the normal picture underneath (which zooms) is shown.
+    if (!_hdrCapable || !widget.active || _full == null || _zoomed) return viewer;
     return Stack(fit: StackFit.expand, children: [
       viewer,
-      IgnorePointer(child: _HdrPhotoView(bytes: _full!, onCreated: _sendHdrTransform)),
+      IgnorePointer(child: _HdrPhotoView(bytes: _full!)),
     ]);
   }
 }
 
 /// Android native view that shows an Ultra HDR photo in real HDR.
 class _HdrPhotoView extends StatelessWidget {
-  const _HdrPhotoView({required this.bytes, required this.onCreated});
+  const _HdrPhotoView({required this.bytes});
   final Uint8List bytes;
-  final VoidCallback onCreated;
 
   @override
   Widget build(BuildContext context) => PlatformViewLink(
@@ -464,10 +446,7 @@ class _HdrPhotoView extends StatelessWidget {
             creationParams: {'bytes': bytes},
             creationParamsCodec: const StandardMessageCodec(),
           );
-          c.addOnPlatformViewCreatedListener((id) {
-            params.onPlatformViewCreated(id);
-            onCreated();
-          });
+          c.addOnPlatformViewCreatedListener(params.onPlatformViewCreated);
           c.create();
           return c;
         },
