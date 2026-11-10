@@ -114,12 +114,15 @@ class MainActivity : FlutterActivity() {
     private fun describe(uri: Uri): Map<String, Any?> {
         var name: String? = null
         var size: Long? = null
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+        var modified: Long? = null
+        contentResolver.query(uri, null, null, null, null)?.use { c ->
             if (c.moveToFirst()) {
                 val ni = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 val si = c.getColumnIndex(OpenableColumns.SIZE)
+                val mi = c.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
                 if (ni >= 0) name = c.getString(ni)
                 if (si >= 0 && !c.isNull(si)) size = c.getLong(si)
+                if (mi >= 0 && !c.isNull(mi)) modified = c.getLong(mi).takeIf { it > 0 }
             }
         }
         return mapOf(
@@ -128,6 +131,7 @@ class MainActivity : FlutterActivity() {
             "size" to size,
             "mime" to contentResolver.getType(uri),
             "relativePath" to originalFolder(uri),
+            "modified" to modified,
         )
     }
 
@@ -187,7 +191,8 @@ class MainActivity : FlutterActivity() {
             "photo" -> MediaStore.Images.Media.getContentUri(volume)
             "video" -> MediaStore.Video.Media.getContentUri(volume)
             "audio" -> MediaStore.Audio.Media.getContentUri(volume)
-            else -> MediaStore.Downloads.getContentUri(volume)
+            // Documents and other files: Documents/ or Download/ folders.
+            else -> MediaStore.Files.getContentUri(volume)
         }
         val attempts = listOf(
             primary to relativePath,
@@ -307,12 +312,11 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-            // Opens the system picker for photos, videos and audio.
+            // Opens the system picker (any kind of file).
             "pickMedia" -> {
                 val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "*/*"
-                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*", "audio/*"))
+                    type = "*/*" // any kind of file
                     putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                 }
                 launch(intent) { data ->

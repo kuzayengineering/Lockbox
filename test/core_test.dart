@@ -16,6 +16,7 @@ import 'package:lockbox/core/models.dart';
 import 'package:lockbox/core/mp4_probe.dart';
 import 'package:lockbox/core/ultra_hdr.dart';
 import 'package:lockbox/core/vault.dart';
+import 'package:lockbox/state/importer.dart' show classify;
 import 'package:path/path.dart' as p;
 
 Uint8List _data(int n, [int seed = 1]) {
@@ -489,6 +490,29 @@ void main() {
       expect(
           const LibraryQuery(hdrOnly: true).apply(v.data.items).map((i) => i.id),
           ['a']);
+    });
+  });
+
+  group('any file type', () {
+    test('classify', () {
+      expect(classify('a.jpg', null), (MediaKind.photo, 'image/jpeg'));
+      expect(classify('a.MOV', null), (MediaKind.video, 'video/quicktime'));
+      expect(classify('Report.pdf', null), (MediaKind.file, 'application/pdf'));
+      expect(classify('sheet.xlsx', null).$1, MediaKind.file);
+      expect(classify('weird.qqq', 'application/x-thing'),
+          (MediaKind.file, 'application/x-thing'));
+      expect(classify('noext', null), (MediaKind.file, 'application/octet-stream'));
+      expect(classify('clip', 'video/mp4'), (MediaKind.video, 'video/mp4'));
+    });
+
+    test('files filter', () {
+      MediaItem it(String id, MediaKind k) => MediaItem(
+          id: id, blobId: id, name: id, kind: k, mimeType: 'x', sizeBytes: 1,
+          addedAt: DateTime(2024));
+      final items = [it('p', MediaKind.photo), it('f', MediaKind.file)];
+      expect(const LibraryQuery(kinds: {MediaKind.file}).apply(items).map((i) => i.id), ['f']);
+      final j = MediaItem.fromJson(it('f', MediaKind.file).toJson());
+      expect(j.kind, MediaKind.file);
     });
   });
 

@@ -9,6 +9,7 @@ import 'dart:ui' as ui;
 
 import 'package:exif/exif.dart';
 import 'package:image/image.dart' as img;
+import 'package:pdfrx/pdfrx.dart';
 
 import '../core/crypto.dart';
 import '../core/models.dart';
@@ -43,18 +44,39 @@ String _ext(String name) {
   return i < 0 ? '' : name.substring(i + 1).toLowerCase();
 }
 
-/// Works out photo/video/audio and the MIME type. Null = unsupported.
-(MediaKind, String)? classify(String name, String? mime) {
+const _fileExt = {
+  'pdf': 'application/pdf', 'txt': 'text/plain', 'md': 'text/markdown',
+  'csv': 'text/csv', 'json': 'application/json', 'xml': 'application/xml',
+  'log': 'text/plain', 'html': 'text/html', 'htm': 'text/html',
+  'rtf': 'application/rtf', 'doc': 'application/msword',
+  'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'xls': 'application/vnd.ms-excel',
+  'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'ppt': 'application/vnd.ms-powerpoint',
+  'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'odt': 'application/vnd.oasis.opendocument.text',
+  'ods': 'application/vnd.oasis.opendocument.spreadsheet',
+  'zip': 'application/zip', '7z': 'application/x-7z-compressed',
+  'rar': 'application/vnd.rar', 'gz': 'application/gzip', 'tar': 'application/x-tar',
+  'apk': 'application/vnd.android.package-archive', 'epub': 'application/epub+zip',
+  'dwg': 'image/vnd.dwg', 'dxf': 'image/vnd.dxf', 'kml': 'application/vnd.google-earth.kml+xml',
+};
+
+/// Works out the kind of file and its MIME type. Anything that isn't a
+/// photo, video or audio file is stored as a general file.
+(MediaKind, String) classify(String name, String? mime) {
   final e = _ext(name);
   if (_photoExt.containsKey(e)) return (MediaKind.photo, _photoExt[e]!);
   if (_videoExt.containsKey(e)) return (MediaKind.video, _videoExt[e]!);
   if (_audioExt.containsKey(e)) return (MediaKind.audio, _audioExt[e]!);
-  if (mime != null) {
+  if (_fileExt.containsKey(e)) return (MediaKind.file, _fileExt[e]!);
+  if (mime != null && mime.isNotEmpty) {
     if (mime.startsWith('image/')) return (MediaKind.photo, mime);
     if (mime.startsWith('video/')) return (MediaKind.video, mime);
     if (mime.startsWith('audio/')) return (MediaKind.audio, mime);
+    return (MediaKind.file, mime);
   }
-  return null;
+  return (MediaKind.file, 'application/octet-stream');
 }
 
 class ImportResult {
@@ -93,12 +115,7 @@ class Importer {
 
   Future<bool> _importOne(PickedFile f, String? folderId, bool deleteOriginal,
       ImportResult result) async {
-    final type = classify(f.name, f.mime);
-    if (type == null) {
-      result.failures[f.name] = 'Not a photo, video or audio file';
-      return false;
-    }
-    final (kind, mime) = type;
+    final (kind, mime) = classify(f.name, f.mime);
     final opened = await Native.open(f);
     var closed = false;
     try {
@@ -117,7 +134,12 @@ class Importer {
       Uint8List? thumb;
 
       // ---- metadata
-      if (kind != MediaKind.photo) {
+      final media = kind != MediaKind.file;
+      if (kind == MediaKind.file) {
+        item.createdAt = f.modified;
+        if (mime == 'application/pdf') thumb = await pdfThumbnail(opened.path);
+      }
+      if (kind == MediaKind.video || kind == MediaKind.audio) {
         final info = await probeMp4(opened.path);
         if (info != null) {
           item
@@ -130,7 +152,7 @@ class Importer {
             ..createdAt = info.createdAt;
         }
       }
-      if (Native.isAndroid) {
+      if (Native.isAndroid && media) {
         final m = await Native.probe(opened, kind.name, thumbSize: kThumbSize);
         if (m != null) {
           thumb = m['thumbnail'] as Uint8List?;
@@ -175,7 +197,7 @@ class Importer {
             ..height = dims.$2;
         }
         thumb ??= await photoThumbnail(bytes);
-      } else if (!Native.isAndroid) {
+      } else if (!Native.isAndroid && media) {
         try {
           final m = await mpvProbe(opened.path)
               .timeout(const Duration(seconds: 20));
@@ -185,6 +207,7 @@ class Importer {
           item.height ??= m.height;
         } catch (_) {}
       }
+      item.createdAt ??= f.modified;
       if (!Native.isAndroid && item.createdAt == null) {
         try {
           item.createdAt = await File(opened.path).lastModified();
@@ -296,3 +319,31 @@ Future<Uint8List?> _shrinkJpeg(Uint8List jpeg) => Isolate.run(() {
           : im;
       return Uint8List.fromList(img.encodeJpg(out, quality: 82));
     });
+
+/// First page of a PDF as a JPEG thumbnail (null if it can't be read).
+Future<Uint8List?> pdfThumbnail(String path) async {
+  PdfDocument? doc;
+  try {
+    await pdfrxFlutterInitialize();
+    doc = await PdfDocument.openFile(path);
+    if (doc.pages.isEmpty) return null;
+    final page = doc.pages.first;
+    final scale = kThumbSize / (page.width > page.height ? page.width : page.height);
+    final w = (page.width * scale).round(), h = (page.height * scale).round();
+    final image = await page.render(
+        fullWidth: w.toDouble(), fullHeight: h.toDouble(), backgroundColor: 0xFFFFFFFF);
+    if (image == null) return null;
+    final px = Uint8List.fromList(image.pixels);
+    final iw = image.width, ih = image.height;
+    image.dispose();
+    return await Isolate.run(() => Uint8List.fromList(img.encodeJpg(
+        img.Image.fromBytes(
+            width: iw, height: ih, bytes: px.buffer, numChannels: 4,
+            order: img.ChannelOrder.bgra),
+        quality: 82)));
+  } catch (_) {
+    return null;
+  } finally {
+    await doc?.dispose();
+  }
+}

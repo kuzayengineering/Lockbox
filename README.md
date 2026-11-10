@@ -1,7 +1,8 @@
 # Lockbox
 
-A private, encrypted vault for photos, videos and audio, for **Android** and
-**Windows**, with Google Photos–style viewing and playback built in.
+A private, encrypted vault for photos, videos, audio **and any other files**
+(documents, PDFs, spreadsheets, archives…), for **Android** and **Windows**, with
+Google Photos–style viewing and playback built in.
 
 Nothing leaves your device. The Android app has no internet permission, and
 there are no accounts or cloud servers.
@@ -44,6 +45,15 @@ there are no accounts or cloud servers.
   video and given the same tags.
 - Windows keyboard shortcuts: ← → next/previous item, Space play/pause,
   `,` `.` previous/next frame, F favourite, Esc close.
+
+**Documents and other files**
+- Any kind of file can be stored, with the same encryption, folders, tags,
+  sorting, filters, search, restore and backup.
+- PDFs get a first-page thumbnail. PDFs and text files (txt, csv, json, log…)
+  open in a reader inside Lockbox; the file is decrypted in memory only, and
+  text can't be selected or copied out.
+- Other types (Word, Excel, zip…) can't be shown inside Lockbox. Use
+  **Restore** to put a copy back on the device and open it with another app.
 
 **Adding and restoring**
 - **Move** files into Lockbox (the originals are deleted) or **Copy** them.

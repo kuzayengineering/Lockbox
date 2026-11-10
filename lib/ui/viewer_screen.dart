@@ -20,6 +20,7 @@ import '../platform/native.dart';
 import '../platform/player.dart';
 import '../state/app_state.dart';
 import 'common.dart';
+import 'file_reader.dart';
 
 class ViewerScreen extends StatefulWidget {
   const ViewerScreen({super.key, required this.items, required this.initialIndex});
@@ -62,7 +63,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   void _activate() {
     final i = _item;
-    if (i.kind == MediaKind.photo) {
+    if (i.kind != MediaKind.video && i.kind != MediaKind.audio) {
       if (_app.hasPlayer) _player.stop();
     } else {
       final s = _app.settings;
@@ -106,7 +107,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   KeyEventResult _onKey(FocusNode _, KeyEvent e) {
     if (e is! KeyDownEvent) return KeyEventResult.ignored;
     final k = e.logicalKey;
-    final media = _item.kind != MediaKind.photo;
+    final media = _item.kind == MediaKind.video || _item.kind == MediaKind.audio;
     final video = _item.kind == MediaKind.video;
     if (k == LogicalKeyboardKey.arrowRight) {
       _go(1);
@@ -198,6 +199,11 @@ class _ViewerScreenState extends State<ViewerScreen> {
                           item: it,
                           onTap: () => _setChrome(!_chrome),
                         ),
+                      MediaKind.file => FilePage(
+                          key: ValueKey(it.id),
+                          item: it,
+                          onTap: () => _setChrome(!_chrome),
+                        ),
                     };
                   },
                 ),
@@ -243,7 +249,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
                   child: SafeArea(
                     top: false,
                     child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      if (item.kind != MediaKind.photo)
+                      if (item.kind == MediaKind.video || item.kind == MediaKind.audio)
                         _PlaybackBar(item: item, onInteract: _scheduleHide),
                       _ActionRow(item: item, onInfo: _showInfo, onChanged: _afterRemoval),
                     ]),
@@ -767,7 +773,7 @@ class _TopBar extends StatelessWidget {
               itemBuilder: (_) => [
                 const PopupMenuItem(value: 'move', child: Text('Move to folder')),
                 const PopupMenuItem(value: 'rename', child: Text('Rename')),
-                if (item.kind != MediaKind.photo)
+                if (item.kind == MediaKind.video || item.kind == MediaKind.audio)
                   CheckedPopupMenuItem(
                       value: 'loop', checked: app.settings.loopVideos, child: const Text('Loop')),
               ],

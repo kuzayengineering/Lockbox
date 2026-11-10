@@ -82,6 +82,7 @@ class _FilterSheetState extends State<_FilterSheet> {
                     MediaKind.photo => 'Photos',
                     MediaKind.video => 'Videos',
                     MediaKind.audio => 'Audio',
+                    MediaKind.file => 'Files',
                   }),
                   selected: q.kinds.contains(k),
                   onSelected: (on) {

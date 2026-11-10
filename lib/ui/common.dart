@@ -102,7 +102,7 @@ class _ThumbState extends State<MediaThumb> {
       color: scheme.surfaceContainerHighest,
       alignment: Alignment.center,
       child: _done
-          ? Icon(kindIcon(widget.item.kind), color: scheme.onSurfaceVariant)
+          ? Icon(itemIcon(widget.item), color: scheme.onSurfaceVariant)
           : null,
     );
   }
@@ -112,7 +112,40 @@ IconData kindIcon(MediaKind k) => switch (k) {
       MediaKind.photo => Icons.photo_outlined,
       MediaKind.video => Icons.movie_outlined,
       MediaKind.audio => Icons.music_note_outlined,
+      MediaKind.file => Icons.insert_drive_file_outlined,
     };
+
+/// Icon for an item, by file type for general files.
+IconData itemIcon(MediaItem i) {
+  if (i.kind != MediaKind.file) return kindIcon(i.kind);
+  final e = i.extension;
+  if (e == 'pdf') return Icons.picture_as_pdf_outlined;
+  if (const {'doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'log'}.contains(e)) {
+    return Icons.description_outlined;
+  }
+  if (const {'xls', 'xlsx', 'ods', 'csv'}.contains(e)) return Icons.table_chart_outlined;
+  if (const {'ppt', 'pptx', 'odp'}.contains(e)) return Icons.slideshow_outlined;
+  if (const {'zip', '7z', 'rar', 'gz', 'tar'}.contains(e)) return Icons.folder_zip_outlined;
+  if (const {'json', 'xml', 'html', 'htm', 'kml'}.contains(e)) return Icons.code;
+  return Icons.insert_drive_file_outlined;
+}
+
+/// Files Lockbox can show inside the app.
+enum Preview { pdf, text, none }
+
+const _textExt = {
+  'txt', 'md', 'csv', 'json', 'xml', 'log', 'ini', 'cfg', 'conf', 'yaml',
+  'yml', 'html', 'htm', 'kml', 'gpx', 'srt', 'vtt', 'tsv',
+};
+
+Preview previewOf(MediaItem i) {
+  if (i.kind != MediaKind.file) return Preview.none;
+  if (i.extension == 'pdf' || i.mimeType == 'application/pdf') return Preview.pdf;
+  if (_textExt.contains(i.extension) || i.mimeType.startsWith('text/')) {
+    return Preview.text;
+  }
+  return Preview.none;
+}
 
 /// Small rounded label shown on thumbnails ("HDR", "60", "1:23").
 class Badge2 extends StatelessWidget {

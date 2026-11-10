@@ -10,6 +10,7 @@ import 'package:lockbox/core/crypto.dart';
 import 'package:lockbox/core/models.dart';
 import 'package:lockbox/core/vault.dart';
 import 'package:lockbox/state/app_state.dart';
+import 'package:lockbox/ui/file_reader.dart';
 import 'package:lockbox/ui/viewer_screen.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
@@ -120,6 +121,58 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ViewerScreen), findsOneWidget, reason: 'must not close');
     expect(photoScale(tester), greaterThan(2.0));
+    await tester.runAsync(app.lock);
+  });
+
+  testWidgets('documents open in the in-app reader', (tester) async {
+    await tester.runAsync(() async {
+      final dir = p.join(tmp.path, 'vault');
+      final v = await Vault.create(dir, 'pw', params: KdfParams.testing);
+      Future<void> add(String id, String name, String mime, String text) async {
+        final f = File(p.join(tmp.path, name))..writeAsStringSync(text);
+        v.data.items.add(MediaItem(
+          id: id,
+          blobId: await v.storeFile(f.path),
+          name: name,
+          kind: MediaKind.file,
+          mimeType: mime,
+          sizeBytes: f.lengthSync(),
+          addedAt: DateTime(2024, 1, id == 'a' ? 2 : 1),
+        ));
+      }
+
+      await add('a', 'Trip notes.txt', 'text/plain', 'Day one: arrived at the lake.');
+      await add('b', 'Plans.xyz', 'application/octet-stream', 'binary-ish');
+      await v.save();
+      await v.lock();
+      app = AppState()..vaultDir = dir;
+      await app.unlock('pw');
+    });
+    final items = [...app.vault.data.items];
+    await tester.pumpWidget(ChangeNotifierProvider.value(
+      value: app,
+      child: MaterialApp(home: ViewerScreen(items: items, initialIndex: 0)),
+    ));
+    await tester.pump();
+    expect(find.text('Trip notes.txt'), findsOneWidget);
+    expect(find.textContaining('Text file'), findsOneWidget);
+
+    await tester.tap(find.text('Open'));
+    await tester.pump(const Duration(milliseconds: 400)); // page transition
+    for (var i = 0; i < 5; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+      await tester.pump();
+    }
+    expect(find.text('Day one: arrived at the lake.'), findsOneWidget);
+    Navigator.of(tester.element(find.byType(FileReaderScreen))).pop();
+    await tester.pumpAndSettle();
+
+    // Unknown type: no reader, explains how to use it.
+    await tester.fling(find.byType(PageView), const Offset(-300, 0), 1500);
+    await tester.pumpAndSettle();
+    expect(find.text('Plans.xyz'), findsOneWidget);
+    expect(find.textContaining('can\'t show this kind of file'), findsOneWidget);
+    expect(find.text('Open'), findsNothing);
     await tester.runAsync(app.lock);
   });
 

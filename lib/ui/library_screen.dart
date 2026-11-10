@@ -255,7 +255,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           Text(
             filtered
                 ? 'Try removing some filters.'
-                : 'Tap “Add” to move photos, videos and audio into Lockbox. '
+                : 'Tap “Add” to move photos, videos, audio and any other files into Lockbox. '
                     'They are encrypted on this device.',
             textAlign: TextAlign.center,
           ),
@@ -443,7 +443,12 @@ class _Tile extends StatelessWidget {
           padding: EdgeInsets.all(selected ? 10 : 0),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(selected ? 10 : 0),
-            child: Hero(tag: 'media-${item.id}', child: MediaThumb(item)),
+            child: Hero(
+              tag: 'media-${item.id}',
+              child: item.kind == MediaKind.file && item.thumbId == null
+                  ? _FileTile(item: item, small: small)
+                  : MediaThumb(item),
+            ),
           ),
         ),
         if (!small) ...[
@@ -461,7 +466,13 @@ class _Tile extends StatelessWidget {
               if (item.isHighFrameRate) Badge2('${item.fps!.round()}'),
             ]),
           ),
-          if (item.kind != MediaKind.photo)
+          if (item.kind == MediaKind.file && item.thumbId != null)
+            Positioned(
+              bottom: 4,
+              right: 4,
+              child: Badge2(item.extension.toUpperCase(), icon: itemIcon(item)),
+            ),
+          if (item.kind == MediaKind.video || item.kind == MediaKind.audio)
             Positioned(
               bottom: 4,
               right: 4,
@@ -486,6 +497,38 @@ class _Tile extends StatelessWidget {
               color: selected ? Theme.of(context).colorScheme.primary : Colors.white,
             ),
           ),
+      ]),
+    );
+  }
+}
+
+/// Grid tile for a document without a picture: type icon, extension, name.
+class _FileTile extends StatelessWidget {
+  const _FileTile({required this.item, required this.small});
+  final MediaItem item;
+  final bool small;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      color: scheme.surfaceContainerHighest,
+      padding: const EdgeInsets.all(6),
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(itemIcon(item), size: small ? 22 : 36, color: scheme.primary),
+        if (item.extension.isNotEmpty)
+          Text(item.extension.toUpperCase(),
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: scheme.primary)),
+        if (!small) ...[
+          const SizedBox(height: 4),
+          Text(
+            item.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+          ),
+        ],
       ]),
     );
   }
@@ -610,6 +653,12 @@ class _Sidebar extends StatelessWidget {
           label: 'Audio',
           selected: q.kinds.length == 1 && q.kinds.contains(MediaKind.audio),
           onTap: () => go(q.clearFilters().copyWith(folderId: null, kinds: {MediaKind.audio})),
+        ),
+        _NavTile(
+          icon: Icons.insert_drive_file_outlined,
+          label: 'Files',
+          selected: q.kinds.length == 1 && q.kinds.contains(MediaKind.file),
+          onTap: () => go(q.clearFilters().copyWith(folderId: null, kinds: {MediaKind.file})),
         ),
         const Divider(),
         _SectionHeader('Folders', onAdd: () async {

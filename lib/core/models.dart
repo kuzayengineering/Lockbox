@@ -3,7 +3,7 @@
 // The whole library is kept in memory while the vault is unlocked and saved
 // (encrypted) to the vault's index file. Everything here is plain data.
 
-enum MediaKind { photo, video, audio }
+enum MediaKind { photo, video, audio, file }
 
 /// High dynamic range format of a video.
 enum HdrFormat { none, hlg, hdr10, dolbyVision, ultraHdr }

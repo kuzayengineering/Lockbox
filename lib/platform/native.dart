@@ -15,7 +15,8 @@ class PickedFile {
       this.mime,
       this.uri,
       this.path,
-      this.originalLocation});
+      this.originalLocation,
+      this.modified});
   final String name;
   final int? size;
   final String? mime;
@@ -28,6 +29,9 @@ class PickedFile {
 
   /// Folder the file came from (see MediaItem.originalLocation).
   final String? originalLocation;
+
+  /// When the file was last changed (used as its date for documents).
+  final DateTime? modified;
 }
 
 /// A picked file opened for reading.
@@ -71,11 +75,13 @@ class Native {
   static Future<void> hdrZoomAt(double x, double y) =>
       _hdr.invokeMethod('zoomAt', {'x': x, 'y': y});
 
-  static const mediaExtensions = [
-    'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'avif', 'dng',
-    'mp4', 'mov', 'm4v', 'mkv', 'webm', '3gp', 'avi', 'ts', 'mts', 'm2ts',
-    'mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus', 'wma', 'amr',
-  ];
+  static DateTime? _modified(String path) {
+    try {
+      return File(path).lastModifiedSync();
+    } catch (_) {
+      return null;
+    }
+  }
 
   static Future<List<PickedFile>> pickMedia() async {
     if (isAndroid) {
@@ -88,13 +94,15 @@ class Native {
             mime: m['mime'] as String?,
             uri: m['uri'] as String,
             originalLocation: m['relativePath'] as String?,
+            modified: m['modified'] == null
+                ? null
+                : DateTime.fromMillisecondsSinceEpoch((m['modified'] as num).toInt()),
           )
       ];
     }
     final files = await FilePicker.pickFiles(
       dialogTitle: 'Add to Lockbox',
-      type: FileType.custom,
-      allowedExtensions: mediaExtensions,
+      type: FileType.any,
     );
     return [
       for (final f in files)
@@ -103,7 +111,8 @@ class Native {
               name: f.name,
               size: f.lengthSync(),
               path: f.path,
-              originalLocation: p.dirname(f.path!)),
+              originalLocation: p.dirname(f.path!),
+              modified: _modified(f.path!)),
     ];
   }
 
@@ -271,6 +280,7 @@ class Native {
         'photo' => 'Pictures/Lockbox/',
         'video' => 'Movies/Lockbox/',
         'audio' => 'Music/Lockbox/',
+        'file' => 'Documents/Lockbox/',
         _ => 'Download/Lockbox/',
       };
 
