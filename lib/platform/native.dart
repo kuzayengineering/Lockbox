@@ -51,11 +51,25 @@ class Native {
       : Future.value(0);
 
   /// True if this phone can show Ultra HDR photos in HDR.
-  static Future<bool> hdrPhotoDisplay() => _hdrDisplay ??= isAndroid
-      ? _hdr
-          .invokeMethod<bool>('capable')
-          .then((v) => v ?? false, onError: (_) => false)
-      : Future.value(false);
+  static Future<bool> hdrPhotoDisplay() {
+    if (isAndroid) {
+      _hdr.setMethodCallHandler((call) async {
+        hdrListener?.call(call.method, call.arguments);
+      });
+    }
+    return _hdrDisplay ??= isAndroid
+        ? _hdr
+            .invokeMethod<bool>('capable')
+            .then((v) => v ?? false, onError: (_) => false)
+        : Future.value(false);
+  }
+
+  /// Receives "zoomed" (bool) and "tap" from the native HDR photo view.
+  static void Function(String method, Object? args)? hdrListener;
+
+  /// Double-tap zoom on the native HDR photo view (physical pixels).
+  static Future<void> hdrZoomAt(double x, double y) =>
+      _hdr.invokeMethod('zoomAt', {'x': x, 'y': y});
 
   static const mediaExtensions = [
     'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'avif', 'dng',

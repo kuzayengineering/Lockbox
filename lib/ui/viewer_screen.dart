@@ -53,7 +53,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   @override
   void dispose() {
     _hideTimer?.cancel();
-    if (_app.isUnlocked) _player.stop();
+    if (_app.isUnlocked && _app.hasPlayer) _player.stop();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _pages.dispose();
     _focus.dispose();
@@ -63,7 +63,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   void _activate() {
     final i = _item;
     if (i.kind == MediaKind.photo) {
-      _player.stop();
+      if (_app.hasPlayer) _player.stop();
     } else {
       final s = _app.settings;
       _player.open(i, autoplay: true, loop: s.loopVideos, muted: s.muteByDefault);
@@ -313,6 +313,62 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
   Offset _tapPos = Offset.zero;
   bool _zoomed = false;
   bool _hdrCapable = false;
+  bool _nativeZoomed = false;
+  Size _size = Size.zero;
+
+  bool get _hdrOverlay => _hdrCapable && widget.active && _full != null;
+
+  void _onHdrEvent(String method, Object? args) {
+    if (!mounted || !_hdrOverlay) return;
+    if (method == 'zoomed') {
+      final z = args == true;
+      setState(() => _nativeZoomed = z);
+      widget.onZoomChanged(z);
+    } else if (method == 'tap') {
+      widget.onTap();
+    }
+  }
+
+  // Pinch / pan state
+  Matrix4 _startMatrix = Matrix4.identity();
+  Offset _startFocal = Offset.zero;
+
+  /// Keeps the zoomed picture covering the screen (no empty margins).
+  Matrix4 _bounded(double s, Offset t) {
+    final minX = _size.width - _size.width * s;
+    final minY = _size.height - _size.height * s;
+    final x = t.dx.clamp(minX, 0.0);
+    final y = t.dy.clamp(minY, 0.0);
+    return Matrix4.identity()
+      ..translateByDouble(x, y, 0, 1)
+      ..scaleByDouble(s, s, 1, 1);
+  }
+
+  void _onScaleStart(ScaleStartDetails d) {
+    _anim.stop();
+    _startMatrix = _tc.value.clone();
+    _startFocal = d.localFocalPoint;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails d) {
+    final s0 = _startMatrix.getMaxScaleOnAxis();
+    // One finger on an un-zoomed photo is a swipe, not a pan.
+    if (d.pointerCount < 2 && s0 <= 1.01) return;
+    final t0 = Offset(_startMatrix.storage[12], _startMatrix.storage[13]);
+    final contentPoint = (_startFocal - t0) / s0; // what was under the fingers
+    final s = (s0 * d.scale).clamp(1.0, 8.0);
+    _tc.value = _bounded(s, d.localFocalPoint - contentPoint * s);
+  }
+
+  void _onScaleEnd(ScaleEndDetails d) {
+    if (_tc.value.getMaxScaleOnAxis() < 1.05) _animateTo(Matrix4.identity());
+  }
+
+  void _animateTo(Matrix4 end) {
+    _zoomAnim = Matrix4Tween(begin: _tc.value, end: end)
+        .animate(CurveTween(curve: Curves.easeOut).animate(_anim));
+    _anim.forward(from: 0);
+  }
 
   @override
   void initState() {
@@ -339,20 +395,20 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
 
   @override
   void dispose() {
+    if (Native.hdrListener == _onHdrEvent) Native.hdrListener = null;
     _anim.dispose();
     _tc.dispose();
     super.dispose();
   }
 
   void _toggleZoom() {
-    final end = _zoomed
-        ? Matrix4.identity()
-        : (Matrix4.identity()
-          ..translateByDouble(-_tapPos.dx * 1.5, -_tapPos.dy * 1.5, 0, 1)
-          ..scaleByDouble(2.5, 2.5, 1, 1));
-    _zoomAnim = Matrix4Tween(begin: _tc.value, end: end)
-        .animate(CurveTween(curve: Curves.easeOut).animate(_anim));
-    _anim.forward(from: 0);
+    if (_hdrOverlay) {
+      // The native HDR view zooms itself.
+      final dpr = MediaQuery.of(context).devicePixelRatio;
+      Native.hdrZoomAt(_tapPos.dx * dpr, _tapPos.dy * dpr);
+      return;
+    }
+    _animateTo(_zoomed ? Matrix4.identity() : _bounded(2.5, _tapPos * -1.5));
   }
 
   Future<void> _convert() async {
@@ -403,40 +459,97 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
         },
       );
     }
-    final viewer = GestureDetector(
-      onTap: widget.onTap,
-      onDoubleTapDown: (d) => _tapPos = d.localPosition,
-      onDoubleTap: _toggleZoom,
-      child: InteractiveViewer(
-        transformationController: _tc,
-        minScale: 1,
-        maxScale: 8,
-        child: SizedBox.expand(child: Hero(tag: 'media-${widget.item.id}', child: content)),
-      ),
-    );
-    // Ultra HDR photo on an HDR phone: the native view draws the real HDR
-    // picture on top while not zoomed; Flutter handles all gestures. While
-    // zoomed in, the normal picture underneath (which zooms) is shown.
-    if (!_hdrCapable || !widget.active || _full == null || _zoomed) return viewer;
+    final viewer = LayoutBuilder(builder: (context, c) {
+      _size = c.biggest;
+      return RawGestureDetector(
+        // With the HDR view on top, two-finger gestures go to it instead.
+        gestures: _hdrOverlay ? const {} : {
+          _PinchRecognizer: GestureRecognizerFactoryWithHandlers<_PinchRecognizer>(
+            () => _PinchRecognizer(debugOwner: this),
+            (r) => r
+              ..onStart = _onScaleStart
+              ..onUpdate = _onScaleUpdate
+              ..onEnd = _onScaleEnd,
+          ),
+        },
+        child: GestureDetector(
+          onTap: widget.onTap,
+          onDoubleTapDown: (d) => _tapPos = d.localPosition,
+          onDoubleTap: _toggleZoom,
+          child: ClipRect(
+            child: ValueListenableBuilder<Matrix4>(
+              valueListenable: _tc,
+              builder: (context, m, child) => Transform(transform: m, child: child),
+              child: SizedBox.expand(
+                  child: Hero(tag: 'media-${widget.item.id}', child: content)),
+            ),
+          ),
+        ),
+      );
+    });
+    // Ultra HDR photo on an HDR phone: the native view shows the real HDR
+    // picture on top and does its own zooming (see _HdrPhotoView).
+    if (!_hdrOverlay) return viewer;
+    Native.hdrListener = _onHdrEvent;
     return Stack(fit: StackFit.expand, children: [
       viewer,
-      IgnorePointer(child: _HdrPhotoView(bytes: _full!)),
+      _HdrPhotoView(bytes: _full!, zoomed: _nativeZoomed),
     ]);
   }
 }
 
+/// Pinch recognizer that claims the touch the moment a second finger lands,
+/// so zooming always beats the gallery's swipe gestures.
+class _PinchRecognizer extends ScaleGestureRecognizer {
+  _PinchRecognizer({super.debugOwner});
+
+  final _down = <int>{};
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    super.addAllowedPointer(event);
+    _down.add(event.pointer);
+    if (_down.length >= 2) resolve(GestureDisposition.accepted);
+  }
+
+  @override
+  void handleEvent(PointerEvent event) {
+    if (event is PointerUpEvent || event is PointerCancelEvent) {
+      _down.remove(event.pointer);
+    }
+    super.handleEvent(event);
+  }
+
+  @override
+  void rejectGesture(int pointer) {
+    _down.remove(pointer);
+    super.rejectGesture(pointer);
+  }
+}
+
 /// Android native view that shows an Ultra HDR photo in real HDR.
+///
+/// One-finger gestures stay with the gallery (swipe, swipe down, tap,
+/// double-tap). A second finger hands the touch to the native view, which
+/// zooms; while zoomed it receives every touch.
 class _HdrPhotoView extends StatelessWidget {
-  const _HdrPhotoView({required this.bytes});
+  const _HdrPhotoView({required this.bytes, required this.zoomed});
   final Uint8List bytes;
+  final bool zoomed;
 
   @override
   Widget build(BuildContext context) => PlatformViewLink(
         viewType: 'lockbox/hdr_image',
         surfaceFactory: (context, controller) => AndroidViewSurface(
           controller: controller as AndroidViewController,
-          gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
-          hitTestBehavior: PlatformViewHitTestBehavior.transparent,
+          gestureRecognizers: zoomed
+              ? <Factory<OneSequenceGestureRecognizer>>{
+                  Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new),
+                }
+              : <Factory<OneSequenceGestureRecognizer>>{
+                  Factory<OneSequenceGestureRecognizer>(_PinchRecognizer.new),
+                },
+          hitTestBehavior: PlatformViewHitTestBehavior.translucent,
         ),
         onCreatePlatformView: (params) {
           final c = PlatformViewsService.initExpensiveAndroidView(
@@ -690,13 +803,19 @@ class _PlaybackBarState extends State<_PlaybackBar> {
     try {
       final saved = await app.saveFrame(widget.item, at);
       if (!mounted) return;
-      snack(
-          context,
-          saved == null
-              ? 'Couldn\'t capture this frame – please try again'
-              : saved.hdr == HdrFormat.ultraHdr
-                  ? 'Frame saved to Screenshots in Lockbox (Ultra HDR)'
-                  : 'Frame saved to Screenshots in Lockbox');
+      final note = app.player.lastCaptureNote;
+      final String msg;
+      if (saved == null) {
+        msg = 'Couldn\'t capture this frame – please try again';
+      } else if (saved.hdr == HdrFormat.ultraHdr) {
+        msg = 'Frame saved to Screenshots (Ultra HDR'
+            '${note == null || note.isEmpty ? '' : ', $note'})';
+      } else if (note != null && note.isNotEmpty) {
+        msg = 'Frame saved to Screenshots (standard photo: $note)';
+      } else {
+        msg = 'Frame saved to Screenshots in Lockbox';
+      }
+      snack(context, msg);
     } catch (e) {
       final msg = e is PlatformException ? (e.message ?? e.code) : e.toString();
       if (mounted) snack(context, 'Couldn\'t capture this frame: $msg');
@@ -920,7 +1039,8 @@ class _InfoSheet extends StatelessWidget {
           row(Icons.aspect_ratio, 'Resolution', resolutionLabel(item)),
           row(Icons.slow_motion_video, 'Frame rate',
               item.fps == null ? null : '${item.fps!.toStringAsFixed(item.fps! % 1 == 0 ? 0 : 2)} fps'),
-          row(Icons.hdr_on, 'Dynamic range', item.kind == MediaKind.video ? item.hdr.label : null),
+          row(Icons.hdr_on, 'Dynamic range',
+              item.kind == MediaKind.video || item.hdr.isHdr ? item.hdr.label : null),
           row(Icons.memory, 'Format', [item.mimeType, ?item.codec].join(' · ')),
           row(Icons.storage, 'Size', formatBytes(item.sizeBytes)),
           row(Icons.folder_outlined, 'Lockbox folder', folder?.name ?? 'Library'),

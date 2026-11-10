@@ -267,15 +267,19 @@ class MainActivity : FlutterActivity() {
                 background(result) {
                     // HDR video: decode the original 10-bit frame and save it
                     // as an Ultra HDR photo.
+                    UltraHdr.lastNote = ""
                     if (wantHdr) {
                         val ds = EncryptedMediaDataSource(File(blob), key)
                         try {
                             val f = HdrFrameDecoder.decode(ds, positionMs * 1000, hint)
-                            if (f != null) {
+                            if (f == null) {
+                                UltraHdr.lastNote = "the HDR frame could not be decoded"
+                            } else {
                                 val bytes = UltraHdr.encodeHalfs(f.px, f.width, f.height)
                                 if (bytes != null) return@background bytes
                             }
-                        } catch (_: Throwable) {
+                        } catch (e: Throwable) {
+                            UltraHdr.lastNote = "HDR decode failed: ${e.message ?: e.javaClass.simpleName}"
                         } finally {
                             try { ds.close() } catch (_: Exception) {}
                         }

@@ -167,6 +167,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  bool get hasPlayer => _player != null;
+
   /// The shared video/audio player (created on first use).
   MediaPlayer get player =>
       _player ??= MediaPlayer.create(vault, server: _server);

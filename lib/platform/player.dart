@@ -103,6 +103,9 @@ abstract class MediaPlayer {
   Future<void> endScrub(Duration finalPosition);
 
   /// JPEG of the video frame at [position] (the paused frame).
+  /// Details about the last captured frame (why it is or isn't HDR).
+  String? lastCaptureNote;
+
   /// If [allowInterrupt] is false, only methods that don't disturb
   /// playback are used (for automatic thumbnails).
   Future<Uint8List?> captureFrame(MediaItem item, Duration position,
@@ -242,8 +245,9 @@ class _AndroidPlayer extends MediaPlayer {
     // the video back where it was (paused).
     final key = await _vault.fileKeyFor(item);
     await _ch.invokeMethod('suspendDecoders');
+    lastCaptureNote = null;
     try {
-      return await const MethodChannel('lockbox/native')
+      final bytes = await const MethodChannel('lockbox/native')
           .invokeMethod<Uint8List>('grabFrame', {
         'blob': _vault.blobPath(item.blobId),
         'key': key,
@@ -251,6 +255,12 @@ class _AndroidPlayer extends MediaPlayer {
         'hdr': hdrVideo,
         'transfer': item.hdr.name,
       });
+      if (hdrVideo) {
+        lastCaptureNote = await const MethodChannel('lockbox/hdr')
+            .invokeMethod<String>('lastNote')
+            .catchError((_) => null);
+      }
+      return bytes;
     } finally {
       key.fillRange(0, key.length, 0);
       await _ch.invokeMethod('resumeDecoders', {'ms': position.inMilliseconds});

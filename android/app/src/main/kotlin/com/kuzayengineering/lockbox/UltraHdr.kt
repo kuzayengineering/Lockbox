@@ -22,6 +22,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Half
+import android.view.GestureDetector
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.widget.ImageView
 import androidx.annotation.RequiresApi
@@ -57,7 +60,11 @@ import kotlin.math.roundToInt
  * are not darkened.
  */
 object UltraHdr {
-    private const val KNEE = 0.8f
+    /** What the last encode produced, shown to the user after Save frame. */
+    @Volatile
+    var lastNote: String = ""
+
+    private const val KNEE = 0.55f
     private const val EPS = 1f / 64f
     private const val BLOCK = 4 // gain map is 1/4 of the width and height
     private const val MAX_PEAK = 16f
@@ -117,8 +124,13 @@ object UltraHdr {
             if (l > peak) peak = l
             i++
         }
-        if (peak < 0.01f) return null
+        if (peak < 0.01f) {
+            lastNote = "the frame was black"
+            return null
+        }
         val useGainmap = Build.VERSION.SDK_INT >= 34 && peak > 1.05f
+        lastNote = if (useGainmap) "" else "no highlights brighter than normal white"
+        val peakRaw = peak
         peak = min(peak, MAX_PEAK)
         val range = peak - KNEE
         val c = if (peak > 1f) (1f - KNEE) * range / (range - (1f - KNEE)) else 1f
@@ -157,7 +169,15 @@ object UltraHdr {
                 val v = if (count[k] == 0) 0f else (logSum[k] / count[k]) / logMax
                 bytes[k] = (v.coerceIn(0f, 1f) * 255f).roundToInt().toByte()
             }
-            if (Build.VERSION.SDK_INT >= 34) attachGainmap(base, bytes, gw, gh, maxRatio)
+            if (Build.VERSION.SDK_INT >= 34) {
+                try {
+                    attachGainmap(base, bytes, gw, gh, maxRatio)
+                    lastNote = "highlights up to %.1f×".format(maxRatio) +
+                        if (peakRaw > MAX_PEAK) " (capped)" else ""
+                } catch (e: Throwable) {
+                    lastNote = "gain map failed: ${e.message ?: e.javaClass.simpleName}"
+                }
+            }
         }
         val out = ByteArrayOutputStream()
         base.compress(Bitmap.CompressFormat.JPEG, quality, out)
@@ -167,7 +187,12 @@ object UltraHdr {
     @RequiresApi(34)
     private fun attachGainmap(base: Bitmap, bytes: ByteArray, gw: Int, gh: Int, maxRatio: Float) {
         val contents = Bitmap.createBitmap(gw, gh, Bitmap.Config.ALPHA_8)
-        contents.copyPixelsFromBuffer(ByteBuffer.wrap(bytes))
+        // Rows in memory may be padded, so copy row by row with the real stride.
+        val stride = contents.rowBytes
+        val padded = if (stride == gw) bytes else ByteArray(stride * gh).also { dst ->
+            for (row in 0 until gh) System.arraycopy(bytes, row * gw, dst, row * stride, gw)
+        }
+        contents.copyPixelsFromBuffer(ByteBuffer.wrap(padded))
         val gm = Gainmap(contents).apply {
             setRatioMin(1f, 1f, 1f)
             setRatioMax(maxRatio, maxRatio, maxRatio)
@@ -384,8 +409,12 @@ object HdrFrameDecoder {
 
 /**
  * Native photo view used for Ultra HDR photos on Android 14+, so their
- * highlights are shown in real HDR. Gestures stay in Flutter, which sends
- * the zoom/pan transform here ("lockbox/hdr" setTransform).
+ * highlights are shown in real HDR.
+ *
+ * Touches: Flutter keeps one-finger gestures (swipe to the next photo,
+ * swipe down to close, tap, double-tap) and hands the touch to this view as
+ * soon as a second finger lands, or entirely while zoomed in. This view then
+ * zooms and pans itself and tells Flutter ("zoomed", "tap") what happened.
  */
 class HdrImageFactory(
     private val activity: Activity,
@@ -395,17 +424,19 @@ class HdrImageFactory(
     private val views = mutableListOf<HdrImage>()
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
+    private val channel = MethodChannel(messenger, "lockbox/hdr")
 
     init {
-        MethodChannel(messenger, "lockbox/hdr").setMethodCallHandler { call, result ->
+        channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "capable" -> result.success(UltraHdr.displayCapable(activity))
                 "sdk" -> result.success(Build.VERSION.SDK_INT)
-                "setTransform" -> {
-                    val s = (call.argument<Number>("scale") ?: 1).toFloat()
-                    val x = (call.argument<Number>("tx") ?: 0).toFloat()
-                    val y = (call.argument<Number>("ty") ?: 0).toFloat()
-                    views.lastOrNull()?.setTransform(s, x, y)
+                "lastNote" -> result.success(UltraHdr.lastNote)
+                // Double-tap from Flutter while not zoomed (physical pixels).
+                "zoomAt" -> {
+                    val x = (call.argument<Number>("x") ?: 0).toFloat()
+                    val y = (call.argument<Number>("y") ?: 0).toFloat()
+                    views.lastOrNull()?.zoomAt(x, y)
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -422,34 +453,70 @@ class HdrImageFactory(
     }
 
     private fun updateColorMode() {
-        if (Build.VERSION.SDK_INT < 26) return
         activity.window.colorMode =
             if (views.isNotEmpty()) ActivityInfo.COLOR_MODE_HDR else ActivityInfo.COLOR_MODE_DEFAULT
     }
 
     inner class HdrImage(context: Context, bytes: ByteArray) : PlatformView {
-        private val image = ImageView(context).apply {
-            scaleType = ImageView.ScaleType.MATRIX
-            setBackgroundColor(Color.TRANSPARENT)
-        }
         private var scale = 1f
         private var tx = 0f
         private var ty = 0f
+        private var reportedZoom = false
+
+        private val scaleDetector = ScaleGestureDetector(context,
+            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScale(d: ScaleGestureDetector): Boolean {
+                    zoomBy(d.scaleFactor, d.focusX, d.focusY)
+                    return true
+                }
+            })
+
+        private val gestures = GestureDetector(context,
+            object : GestureDetector.SimpleOnGestureListener() {
+                override fun onDown(e: MotionEvent) = true
+                override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
+                    if (scale > 1.01f && !scaleDetector.isInProgress) {
+                        tx -= dx
+                        ty -= dy
+                        applyMatrix()
+                    }
+                    return true
+                }
+                override fun onDoubleTap(e: MotionEvent): Boolean {
+                    if (scale > 1.01f) setZoom(1f, 0f, 0f) else zoomAt(e.x, e.y)
+                    return true
+                }
+                override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                    channel.invokeMethod("tap", null)
+                    return true
+                }
+            })
+
+        private val image = object : ImageView(context) {
+            override fun onTouchEvent(event: MotionEvent): Boolean {
+                scaleDetector.onTouchEvent(event)
+                gestures.onTouchEvent(event)
+                if (event.actionMasked == MotionEvent.ACTION_UP ||
+                    event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                    if (scale < 1.05f) setZoom(1f, 0f, 0f)
+                }
+                return true
+            }
+        }.apply {
+            scaleType = ImageView.ScaleType.MATRIX
+            setBackgroundColor(Color.TRANSPARENT)
+        }
 
         init {
             image.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyMatrix() }
             io.execute {
                 val bmp = try {
-                    if (Build.VERSION.SDK_INT >= 28) {
-                        ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { d, info, _ ->
-                            val big = max(info.size.width, info.size.height)
-                            if (big > 4096) {
-                                val f = 4096f / big
-                                d.setTargetSize((info.size.width * f).toInt(), (info.size.height * f).toInt())
-                            }
+                    ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { d, info, _ ->
+                        val big = max(info.size.width, info.size.height)
+                        if (big > 4096) {
+                            val f = 4096f / big
+                            d.setTargetSize((info.size.width * f).toInt(), (info.size.height * f).toInt())
                         }
-                    } else {
-                        null
                     }
                 } catch (_: Throwable) {
                     null
@@ -463,17 +530,37 @@ class HdrImageFactory(
             }
         }
 
-        fun setTransform(s: Float, x: Float, y: Float) {
+        private fun zoomBy(factor: Float, fx: Float, fy: Float) {
+            val ns = (scale * factor).coerceIn(1f, 8f)
+            val k = ns / scale
+            setZoom(ns, fx - (fx - tx) * k, fy - (fy - ty) * k)
+        }
+
+        fun zoomAt(x: Float, y: Float) {
+            setZoom(2.5f, x - x * 2.5f, y - y * 2.5f)
+        }
+
+        private fun setZoom(s: Float, x: Float, y: Float) {
             scale = s
             tx = x
             ty = y
             applyMatrix()
         }
 
+        /** Keeps the picture covering the view, applies it, reports zoom. */
         private fun applyMatrix() {
-            val d = image.drawable ?: return
             val vw = image.width.toFloat()
             val vh = image.height.toFloat()
+            if (vw > 0 && vh > 0) {
+                tx = tx.coerceIn(vw - vw * scale, 0f)
+                ty = ty.coerceIn(vh - vh * scale, 0f)
+            }
+            val zoomed = scale > 1.01f
+            if (zoomed != reportedZoom) {
+                reportedZoom = zoomed
+                channel.invokeMethod("zoomed", zoomed)
+            }
+            val d = image.drawable ?: return
             val bw = d.intrinsicWidth.toFloat()
             val bh = d.intrinsicHeight.toFloat()
             if (vw <= 0 || vh <= 0 || bw <= 0 || bh <= 0) return
@@ -491,6 +578,7 @@ class HdrImageFactory(
         override fun dispose() {
             views.remove(this)
             image.setImageDrawable(null)
+            if (reportedZoom) channel.invokeMethod("zoomed", false)
             updateColorMode()
         }
     }
