@@ -451,56 +451,77 @@ class _Tile extends StatelessWidget {
             ),
           ),
         ),
-        if (!small) ...[
+        // Video / audio: duration and a play (or music) symbol, top right,
+        // white with a soft shadow, like Google Photos.
+        if (item.kind == MediaKind.video || item.kind == MediaKind.audio)
           Positioned(
-            top: 4,
-            left: 4,
-            child: Row(children: [
-              if (item.hdr.isHdr)
-                Badge2(switch (item.hdr) {
-                  HdrFormat.dolbyVision => 'DV',
-                  HdrFormat.ultraHdr => 'HDR',
-                  _ => item.hdr.label,
-                }),
-              if (item.hdr.isHdr && item.isHighFrameRate) const SizedBox(width: 3),
-              if (item.isHighFrameRate) Badge2('${item.fps!.round()}'),
+            top: small ? 3 : 6,
+            right: small ? 3 : 6,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (!small && item.durationMs != null) ...[
+                Text(
+                  formatDuration(Duration(milliseconds: item.durationMs!)),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      shadows: _tileShadow),
+                ),
+                const SizedBox(width: 4),
+              ],
+              Icon(
+                item.kind == MediaKind.audio ? Icons.music_note : Icons.play_circle_outline,
+                color: Colors.white,
+                size: small ? 16 : 22,
+                shadows: _tileShadow,
+              ),
             ]),
           ),
+        if (!small) ...[
+          if (item.hdr.isHdr || item.isHighFrameRate)
+            Positioned(
+              bottom: 4,
+              right: 4,
+              child: Row(children: [
+                if (item.hdr.isHdr)
+                  Badge2(switch (item.hdr) {
+                    HdrFormat.dolbyVision => 'DV',
+                    HdrFormat.ultraHdr => 'HDR',
+                    _ => item.hdr.label,
+                  }),
+                if (item.hdr.isHdr && item.isHighFrameRate) const SizedBox(width: 3),
+                if (item.isHighFrameRate) Badge2('${item.fps!.round()}'),
+              ]),
+            ),
           if (item.kind == MediaKind.file && item.thumbId != null)
             Positioned(
               bottom: 4,
               right: 4,
               child: Badge2(item.extension.toUpperCase(), icon: itemIcon(item)),
             ),
-          if (item.kind == MediaKind.video || item.kind == MediaKind.audio)
-            Positioned(
-              bottom: 4,
-              right: 4,
-              child: Badge2(
-                item.durationMs == null ? '' : formatDuration(Duration(milliseconds: item.durationMs!)),
-                icon: item.kind == MediaKind.audio ? Icons.music_note : Icons.play_arrow,
-              ),
-            ),
           if (item.favorite)
             const Positioned(
               bottom: 4,
               left: 4,
-              child: Icon(Icons.favorite, size: 16, color: Colors.white),
+              child: Icon(Icons.favorite, size: 16, color: Colors.white, shadows: _tileShadow),
             ),
         ],
         if (selecting)
           Positioned(
             top: 4,
-            right: 4,
+            left: 4,
             child: Icon(
               selected ? Icons.check_circle : Icons.radio_button_unchecked,
               color: selected ? Theme.of(context).colorScheme.primary : Colors.white,
+              shadows: _tileShadow,
             ),
           ),
       ]),
     );
   }
 }
+
+const _tileShadow = [Shadow(blurRadius: 4, color: Colors.black54)];
 
 /// Grid tile for a document without a picture: type icon, extension, name.
 class _FileTile extends StatelessWidget {
