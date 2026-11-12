@@ -45,7 +45,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
   MediaItem get _item => _items[_index];
   MediaPlayer get _player => _app.player;
 
-  // ---- video gestures: drag up/down on the right = volume, left = brightness
+  // ---- video gestures: drag up/down in the right third = volume, left third
+  // = brightness (middle half of the height only)
   _Level? _adjusting; // during a drag on a video
   _Level _levelKind = _Level.volume; // what the indicator shows
   double _level = 0;
@@ -56,7 +57,20 @@ class _ViewerScreenState extends State<ViewerScreen> {
   void _onDragStart(DragStartDetails d) {
     _adjusting = null;
     if (_item.kind != MediaKind.video || _zoomed) return;
-    final left = d.localPosition.dx < MediaQuery.of(context).size.width / 2;
+    // Only drags starting in the left or right third, within the middle half
+    // of the height, adjust brightness/volume. Drags from the top or bottom
+    // quarter (or the middle column) still close / open info.
+    final size = MediaQuery.of(context).size;
+    final p = d.localPosition;
+    if (p.dy < size.height * 0.25 || p.dy > size.height * 0.75) return;
+    final bool left;
+    if (p.dx < size.width / 3) {
+      left = true;
+    } else if (p.dx > size.width * 2 / 3) {
+      left = false;
+    } else {
+      return;
+    }
     final kind = left ? _Level.brightness : _Level.volume;
     _adjusting = kind;
     if (kind == _Level.brightness && !Native.isAndroid) return; // Windows: no screen brightness
