@@ -12,13 +12,13 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import 'common.dart';
 
-/// Returns true if a copy was made.
-Future<bool> showMakeSmallerCopy(BuildContext context, MediaItem video) async {
+/// Returns the new copy, or null if none was made.
+Future<MediaItem?> showMakeSmallerCopy(BuildContext context, MediaItem video) async {
   final app = context.read<AppState>();
   final w = video.width, h = video.height, dur = video.durationMs;
   if (w == null || h == null || dur == null || dur <= 0) {
     snack(context, 'This video\'s size or length is unknown, so it can\'t be converted.');
-    return false;
+    return null;
   }
   final fps = video.fps ?? 30;
   final short = math.min(w, h);
@@ -27,9 +27,9 @@ Future<bool> showMakeSmallerCopy(BuildContext context, MediaItem video) async {
 
   int? side; // null = original
   double? rate; // null = original
-  var quality = CompressQuality.medium;
+  var quality = CompressQuality.high;
   var keepHdr = video.hdr.isHdr;
-  var deleteOriginal = false;
+  var deleteOriginal = true;
 
   String resLabel(int s) => switch (s) {
         2160 => '4K',
@@ -167,7 +167,7 @@ Future<bool> showMakeSmallerCopy(BuildContext context, MediaItem video) async {
       );
     }),
   );
-  if (go != true || !context.mounted) return false;
+  if (go != true || !context.mounted) return null;
 
   final plan = planCompression(
     width: w,
@@ -222,7 +222,7 @@ Future<bool> showMakeSmallerCopy(BuildContext context, MediaItem video) async {
               ? 'Smaller copy saved: ${formatBytes(copy.sizeBytes)} (saved ${formatBytes(saved)})'
               : 'Copy saved: ${formatBytes(copy.sizeBytes)} (no space saved)');
     }
-    return true;
+    return copy;
   } catch (e) {
     if (context.mounted) {
       Navigator.of(context, rootNavigator: true).pop();
@@ -233,6 +233,6 @@ Future<bool> showMakeSmallerCopy(BuildContext context, MediaItem video) async {
               ? 'Cancelled'
               : 'Couldn\'t make a smaller copy: ${e is PlatformException ? e.message : e}');
     }
-    return false;
+    return null;
   }
 }

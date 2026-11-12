@@ -361,10 +361,27 @@ class _ViewerScreenState extends State<ViewerScreen> {
         final name = await promptText(context, title: 'Rename', initial: item.name, ok: 'Rename');
         if (name != null && name.isNotEmpty) await _app.rename(item, name);
       case 'compress':
-        final made = await showMakeSmallerCopy(context, item);
+        final copy = await showMakeSmallerCopy(context, item);
         if (!mounted || !_app.isUnlocked) return;
-        if (made && _app.vault.itemById(item.id) == null) {
-          await _afterRemoval(); // original deleted: move on
+        if (copy != null) {
+          // Show and play the new copy (in place of the original if that
+          // was deleted, otherwise right after it).
+          final at = _items.indexWhere((x) => x.id == item.id);
+          final replaced = _app.vault.itemById(item.id) == null;
+          setState(() {
+            if (at < 0) {
+              _items.insert(0, copy);
+              _index = 0;
+            } else if (replaced) {
+              _items[at] = copy;
+              _index = at;
+            } else {
+              _items.insert(at + 1, copy);
+              _index = at + 1;
+            }
+          });
+          _pages.jumpToPage(_index);
+          _activate();
         } else if (_item.kind == MediaKind.video) {
           _player.open(_item, autoplay: false); // reload, paused
         }

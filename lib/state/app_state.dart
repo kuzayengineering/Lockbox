@@ -407,7 +407,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         id: randomId(8),
         blobId: blobId,
         thumbId: thumbBytes == null ? null : await v.storeThumbnail(thumbBytes),
-        name: '$base (smaller).mp4',
+        name: '$base (s).mp4',
         kind: MediaKind.video,
         mimeType: 'video/mp4',
         sizeBytes: await File(tempPath).length(),
