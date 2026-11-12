@@ -194,11 +194,26 @@ void main() {
     final y = {
       for (final n in ['Mango', 'Zebra', 'Apple'])
         n: tester.getTopLeft(find.descendant(
-                of: find.byType(CheckboxListTile), matching: find.text(n)))
-            .dy,
+                of: find.byType(FilterChip), matching: find.text(n)))
+            .dx,
     };
+    // Buttons in a row: item's tags first (left), then the rest.
     expect(y['Mango']! < y['Zebra']!, isTrue);
     expect(y['Zebra']! < y['Apple']!, isTrue, reason: 'tags on the item come first');
+    bool selected(String n) => tester
+        .widget<FilterChip>(find.ancestor(of: find.text(n), matching: find.byType(FilterChip)))
+        .selected;
+    expect(selected('Zebra'), isTrue);
+    expect(selected('Apple'), isFalse);
+    // Tapping a button switches the tag on.
+    // Tap in real time so the encrypted save it triggers can finish.
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Apple'));
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    });
+    await tester.pump();
+    expect(selected('Apple'), isTrue);
+    expect(app.vault.data.items.first.tagIds.length, 3);
     await tester.runAsync(app.lock);
   });
 

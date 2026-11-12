@@ -267,30 +267,34 @@ Future<void> editTags(BuildContext context, List<MediaItem> items) async {
                 padding: EdgeInsets.all(24),
                 child: Text('No tags yet. Create one above.'),
               ),
+            // Grid of tag buttons: highlighted = on the item. With several
+            // items selected, a tag on only some of them shows a "–".
             Flexible(
-              child: ListView(shrinkWrap: true, children: [
-                for (final t in tags)
-                  Builder(builder: (_) {
-                    final count = items.where((i) => i.tagIds.contains(t.id)).length;
-                    final value = count == items.length
-                        ? true
-                        : count == 0
-                            ? false
-                            : null;
-                    return CheckboxListTile(
-                      tristate: true,
-                      value: value,
-                      secondary: CircleAvatar(radius: 8, backgroundColor: Color(t.color)),
-                      title: Text(t.name),
-                      onChanged: (_) async {
-                        value == true
-                            ? await app.removeTag(items, t.id)
-                            : await app.addTag(items, t.id);
-                        setS(() {});
-                      },
-                    );
-                  }),
-              ]),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: Wrap(spacing: 8, runSpacing: 8, children: [
+                  for (final t in tags)
+                    Builder(builder: (ctx) {
+                      final count = items.where((i) => i.tagIds.contains(t.id)).length;
+                      final on = count == items.length;
+                      final some = count > 0 && !on;
+                      return FilterChip(
+                        key: ValueKey('tag-${t.id}'),
+                        showCheckmark: false,
+                        selected: on,
+                        selectedColor: Theme.of(ctx).colorScheme.primaryContainer,
+                        avatar: some
+                            ? const Icon(Icons.remove, size: 16)
+                            : CircleAvatar(radius: 6, backgroundColor: Color(t.color)),
+                        label: Text(t.name),
+                        onSelected: (_) async {
+                          on ? await app.removeTag(items, t.id) : await app.addTag(items, t.id);
+                          setS(() {});
+                        },
+                      );
+                    }),
+                ]),
+              ),
             ),
           ]),
         ),
