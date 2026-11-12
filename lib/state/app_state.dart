@@ -12,7 +12,9 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../core/backup.dart';
+import '../core/compress_estimate.dart';
 import '../core/crypto.dart' show randomId;
+import '../core/mp4_probe.dart';
 import '../core/library_query.dart';
 import '../core/media_server.dart';
 import '../core/models.dart';
@@ -153,6 +155,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> lock() async {
     if (_vault == null) return;
+    if (compressProgress.value != null) await Native.cancelCompress();
     final v = _vault!;
     _vault = null;
     await _player?.dispose();
@@ -358,6 +361,87 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       await changed(save: false);
     }
   }
+
+  // ----------------------------------------------------------- smaller copy
+
+  /// Progress of "Make smaller copy" (0..1), or null if none is running.
+  final compressProgress = ValueNotifier<double?>(null);
+
+  /// Re-encodes [video] per [plan] and stores the result as a new item with
+  /// the same date, tags, folder, favourite, note and original location.
+  /// Optionally deletes the original. Returns the new item.
+  Future<MediaItem> makeSmallerCopy(
+    MediaItem video,
+    CompressPlan plan, {
+    required int? shortSide,
+    required double? fps,
+    required bool keepHdr,
+    required bool deleteOriginal,
+  }) async {
+    if (hasPlayer) await player.stop(); // frees the video decoder
+    final v = vault;
+    final key = await v.fileKeyFor(video);
+    compressProgress.value = 0;
+    final poll = Timer.periodic(const Duration(milliseconds: 500), (_) async {
+      final p = await Native.compressProgress();
+      if (p >= 0 && compressProgress.value != null) compressProgress.value = p / 100;
+    });
+    String? tempPath;
+    try {
+      final r = await Native.compressVideo(
+        blobPath: v.blobPath(video.blobId),
+        key: key,
+        shortSide: shortSide,
+        fps: fps,
+        bitrate: plan.videoBitrate,
+        keepHdr: keepHdr,
+      );
+      tempPath = r['path'] as String;
+      final info = await probeMp4(tempPath);
+      final blobId = await v.storeFile(tempPath);
+      final thumbBytes = await v.readThumbnail(video);
+      final base = video.name.contains('.')
+          ? video.name.substring(0, video.name.lastIndexOf('.'))
+          : video.name;
+      final copy = MediaItem(
+        id: randomId(8),
+        blobId: blobId,
+        thumbId: thumbBytes == null ? null : await v.storeThumbnail(thumbBytes),
+        name: '$base (smaller).mp4',
+        kind: MediaKind.video,
+        mimeType: 'video/mp4',
+        sizeBytes: await File(tempPath).length(),
+        addedAt: DateTime.now(),
+        createdAt: video.createdAt,
+        durationMs: info?.durationMs ?? video.durationMs,
+        width: info?.width ?? plan.width,
+        height: info?.height ?? plan.height,
+        fps: info?.fps ?? plan.fps,
+        hdr: info?.hdr ?? (keepHdr ? video.hdr : HdrFormat.none),
+        codec: info?.videoCodec ?? 'hvc1',
+        folderId: video.folderId,
+        tagIds: {...video.tagIds},
+        favorite: video.favorite,
+        note: video.note,
+        originalLocation: video.originalLocation,
+      );
+      v.data.items.add(copy);
+      await changed();
+      if (deleteOriginal) await deleteItems([video.id]);
+      return copy;
+    } finally {
+      poll.cancel();
+      compressProgress.value = null;
+      key.fillRange(0, key.length, 0);
+      if (tempPath != null) {
+        try {
+          await File(tempPath).delete();
+        } catch (_) {}
+      }
+    }
+  }
+
+  Future<void> cancelSmallerCopy() => Native.cancelCompress();
 
   // ----------------------------------------------------------- save frame
 

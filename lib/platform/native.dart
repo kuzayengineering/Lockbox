@@ -56,6 +56,36 @@ class Native {
 
   static void Function()? _onPaused;
 
+  // ---- "Make smaller copy" (Android)
+  static const _compress = MethodChannel('lockbox/compress');
+
+  /// Re-encodes a vault video into a temporary MP4 in Lockbox's private
+  /// cache. Returns {path, size, width, height, durationMs}.
+  static Future<Map<String, dynamic>> compressVideo({
+    required String blobPath,
+    required Uint8List key,
+    required int? shortSide,
+    required double? fps,
+    required int bitrate,
+    required bool keepHdr,
+  }) async =>
+      (await _compress.invokeMapMethod<String, dynamic>('start', {
+        'blob': blobPath,
+        'key': key,
+        'shortSide': shortSide ?? 0,
+        'fps': fps ?? 0,
+        'bitrate': bitrate,
+        'keepHdr': keepHdr,
+      }))!;
+
+  /// 0..100, or -1 if unknown.
+  static Future<int> compressProgress() async =>
+      (await _compress.invokeMethod<int>('progress')) ?? -1;
+
+  static Future<void> cancelCompress() async {
+    if (isAndroid) await _compress.invokeMethod('cancel');
+  }
+
   // ---- video gestures (Android): media volume and screen brightness, 0..1
   static Future<double?> mediaVolume() async =>
       isAndroid ? (await _ch.invokeMethod<num>('getMediaVolume'))?.toDouble() : null;

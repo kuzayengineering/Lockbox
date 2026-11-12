@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lockbox/core/auto_tag.dart';
 import 'package:lockbox/core/backup.dart';
 import 'package:lockbox/core/blob_format.dart';
+import 'package:lockbox/core/compress_estimate.dart';
 import 'package:lockbox/core/crypto.dart';
 import 'package:lockbox/core/library_query.dart';
 import 'package:lockbox/core/media_server.dart';
@@ -513,6 +514,47 @@ void main() {
       expect(const LibraryQuery(kinds: {MediaKind.file}).apply(items).map((i) => i.id), ['f']);
       final j = MediaItem.fromJson(it('f', MediaKind.file).toJson());
       expect(j.kind, MediaKind.file);
+    });
+  });
+
+  group('smaller copy estimates', () {
+    // A typical 4K60 HLG phone clip: 60 s, ~50 Mbit/s -> ~375 MB
+    const orig = 375 * 1024 * 1024;
+    CompressPlan plan(int? side, double? fps, CompressQuality q) => planCompression(
+        width: 3840, height: 2160, fps: 59.94, durationMs: 60000,
+        originalBytes: orig, shortSide: side, targetFps: fps, quality: q);
+
+    test('keeps aspect ratio and even sizes', () {
+      expect(scaledSize(3840, 2160, 1080), (1920, 1080));
+      expect(scaledSize(2160, 3840, 720), (720, 1280));
+      expect(scaledSize(1920, 1080, 2160), (1920, 1080)); // never upscale
+      expect(scaledSize(1440, 1080, 720), (960, 720));
+    });
+
+    test('smaller settings give smaller files, and every plan saves space', () {
+      final a = plan(null, null, CompressQuality.high);
+      final b = plan(1080, null, CompressQuality.high);
+      final c = plan(1080, 30, CompressQuality.medium);
+      final d = plan(720, 30, CompressQuality.low);
+      expect(a.estimatedBytes, greaterThan(b.estimatedBytes));
+      expect(b.estimatedBytes, greaterThan(c.estimatedBytes));
+      expect(c.estimatedBytes, greaterThan(d.estimatedBytes));
+      for (final x in [a, b, c, d]) {
+        expect(x.estimatedBytes, lessThanOrEqualTo(orig));
+      }
+      expect(c.width, 1920);
+      expect(c.fps, 30);
+      // 1080p30 medium: ~3.1 Mbit/s video -> roughly 24 MB for a minute
+      expect(c.estimatedBytes / 1048576, inInclusiveRange(18, 30));
+      expect(d.savedFraction, greaterThan(0.9));
+    });
+
+    test('already-small video is not planned to grow', () {
+      final p = planCompression(
+          width: 1920, height: 1080, fps: 30, durationMs: 60000,
+          originalBytes: 10 * 1024 * 1024, quality: CompressQuality.high);
+      expect(p.estimatedBytes, lessThanOrEqualTo(10 * 1024 * 1024));
+      expect(p.saves, isFalse);
     });
   });
 

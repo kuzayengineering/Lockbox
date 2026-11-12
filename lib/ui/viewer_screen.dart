@@ -20,6 +20,7 @@ import '../platform/native.dart';
 import '../platform/player.dart';
 import '../state/app_state.dart';
 import 'common.dart';
+import 'compress_dialog.dart';
 import 'file_reader.dart';
 
 class ViewerScreen extends StatefulWidget {
@@ -359,6 +360,14 @@ class _ViewerScreenState extends State<ViewerScreen> {
       case 'rename':
         final name = await promptText(context, title: 'Rename', initial: item.name, ok: 'Rename');
         if (name != null && name.isNotEmpty) await _app.rename(item, name);
+      case 'compress':
+        final made = await showMakeSmallerCopy(context, item);
+        if (!mounted || !_app.isUnlocked) return;
+        if (made && _app.vault.itemById(item.id) == null) {
+          await _afterRemoval(); // original deleted: move on
+        } else if (_item.kind == MediaKind.video) {
+          _player.open(_item, autoplay: false); // reload, paused
+        }
       case 'loop':
         await _app.updateSettings((s) => s.loopVideos = !s.loopVideos);
         await _player.setLooping(_app.settings.loopVideos);
@@ -906,6 +915,8 @@ class _TopBar extends StatelessWidget {
               itemBuilder: (_) => [
                 const PopupMenuItem(value: 'move', child: Text('Move to folder')),
                 const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                if (item.kind == MediaKind.video && Native.isAndroid)
+                  const PopupMenuItem(value: 'compress', child: Text('Make smaller copy…')),
                 if (item.kind == MediaKind.video || item.kind == MediaKind.audio)
                   CheckedPopupMenuItem(
                       value: 'loop', checked: app.settings.loopVideos, child: const Text('Loop')),
@@ -934,6 +945,15 @@ class _PlaybackBarState extends State<_PlaybackBar> {
   static const _speeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
   bool _saving = false;
+
+  /// Keeps a button's space even while it's hidden, so nothing shifts.
+  Widget _slot(bool visible, Widget child) => Visibility(
+        visible: visible,
+        maintainSize: true,
+        maintainAnimation: true,
+        maintainState: true,
+        child: child,
+      );
 
   Future<void> _saveFrame(Duration at) async {
     if (_saving) return;
@@ -1027,53 +1047,66 @@ class _PlaybackBarState extends State<_PlaybackBar> {
               ),
               Text(formatDuration(s.duration), style: white),
             ]),
-            // Row 2: buttons
-            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-              PopupMenuButton<double>(
-                tooltip: 'Speed',
-                onSelected: player.setSpeed,
-                itemBuilder: (_) => [
-                  for (final sp in _speeds)
-                    CheckedPopupMenuItem(
-                        value: sp, checked: (s.speed - sp).abs() < 0.01, child: Text('${sp}x')),
-                ],
-                child: SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: Center(
-                    child: Text('${s.speed == s.speed.roundToDouble() ? s.speed.toInt() : s.speed}x',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+            // Row 2: buttons. Play/pause stays fixed in the centre; the frame
+            // and camera buttons have fixed slots and only appear when paused.
+            Row(children: [
+              Expanded(
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                  PopupMenuButton<double>(
+                    tooltip: 'Speed',
+                    onSelected: player.setSpeed,
+                    itemBuilder: (_) => [
+                      for (final sp in _speeds)
+                        CheckedPopupMenuItem(
+                            value: sp, checked: (s.speed - sp).abs() < 0.01, child: Text('${sp}x')),
+                    ],
+                    child: SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: Center(
+                        child: Text('${s.speed == s.speed.roundToDouble() ? s.speed.toInt() : s.speed}x',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
                   ),
-                ),
+                  if (isVideo)
+                    _slot(!s.playing,
+                        btn(Icons.skip_previous_outlined, 'Previous frame',
+                            () => player.stepFrame(-1, widget.item.fps))),
+                ]),
               ),
-              // Frame tools only appear while the video is paused.
-              if (isVideo && !s.playing)
-                btn(Icons.skip_previous_outlined, 'Previous frame',
-                    () => player.stepFrame(-1, widget.item.fps)),
               btn(s.playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
                   s.playing ? 'Pause' : 'Play', player.togglePlay,
-                  size: 44),
-              if (isVideo && !s.playing)
-                btn(Icons.skip_next_outlined, 'Next frame',
-                    () => player.stepFrame(1, widget.item.fps)),
-              if (isVideo && !s.playing)
-                IconButton(
-                  color: Colors.white,
-                  disabledColor: Colors.white38,
-                  tooltip: 'Save frame to Lockbox',
-                  icon: _saving
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.photo_camera_outlined),
-                  onPressed: s.position > Duration.zero && !_saving
-                      ? () => _saveFrame(s.position)
-                      : null,
-                ),
-              btn(s.volume == 0 ? Icons.volume_off : Icons.volume_up,
-                  s.volume == 0 ? 'Unmute' : 'Mute',
-                  () => player.setVolume(s.volume == 0 ? 1 : 0)),
+                  size: 60),
+              Expanded(
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                  if (isVideo)
+                    _slot(!s.playing,
+                        btn(Icons.skip_next_outlined, 'Next frame',
+                            () => player.stepFrame(1, widget.item.fps))),
+                  if (isVideo)
+                    _slot(
+                      !s.playing,
+                      IconButton(
+                        color: Colors.white,
+                        disabledColor: Colors.white38,
+                        tooltip: 'Save frame to Lockbox',
+                        icon: _saving
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.photo_camera_outlined),
+                        onPressed: s.position > Duration.zero && !_saving
+                            ? () => _saveFrame(s.position)
+                            : null,
+                      ),
+                    ),
+                  btn(s.volume == 0 ? Icons.volume_off : Icons.volume_up,
+                      s.volume == 0 ? 'Unmute' : 'Mute',
+                      () => player.setVolume(s.volume == 0 ? 1 : 0)),
+                ]),
+              ),
             ]),
           ]),
         );

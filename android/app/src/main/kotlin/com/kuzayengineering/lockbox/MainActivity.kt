@@ -38,6 +38,7 @@ class MainActivity : FlutterActivity() {
 
     private var player: LockboxPlayer? = null
     private var nativeChannel: MethodChannel? = null
+    private var compressor: VideoCompressor? = null
     private val io = Executors.newFixedThreadPool(2)
     private val main = Handler(Looper.getMainLooper())
     private val pending = HashMap<Int, (Intent?) -> Unit>()
@@ -95,6 +96,7 @@ class MainActivity : FlutterActivity() {
             .registerViewFactory("lockbox/video_view", PlayerViewFactory(p))
         flutterEngine.platformViewsController.registry
             .registerViewFactory("lockbox/hdr_image", HdrImageFactory(this, messenger))
+        compressor = VideoCompressor(this, messenger)
         nativeChannel = MethodChannel(messenger, "lockbox/native")
         nativeChannel!!.setMethodCallHandler { call, result ->
             try {
@@ -106,6 +108,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        compressor?.cancel()
         player?.release()
         imports.values.forEach { closeHandle(it, false) }
         imports.clear()
