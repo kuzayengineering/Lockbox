@@ -224,13 +224,25 @@ Future<bool> confirm(BuildContext context,
 /// Lets the user tick/untick tags for [items]; can create new tags.
 Future<void> editTags(BuildContext context, List<MediaItem> items) async {
   final app = context.read<AppState>();
+  // Order fixed when the list opens: tags already on the item(s) first, then
+  // the rest, each alphabetically. Tags created here go to the very top.
+  int byName(Tag a, Tag b) => a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  bool onAny(Tag t) => items.any((i) => i.tagIds.contains(t.id));
+  final order = <String>[
+    ...(app.vault.data.tags.where(onAny).toList()..sort(byName)).map((t) => t.id),
+    ...(app.vault.data.tags.where((t) => !onAny(t)).toList()..sort(byName)).map((t) => t.id),
+  ];
   await showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
     builder: (ctx) => StatefulBuilder(builder: (ctx, setS) {
-      final tags = [...app.vault.data.tags]
-        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      final byId = {for (final t in app.vault.data.tags) t.id: t};
+      final fresh = byId.keys.where((id) => !order.contains(id)).toList();
+      final tags = [
+        for (final id in [...fresh.reversed, ...order])
+          if (byId[id] != null) byId[id]!,
+      ];
       return SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.7),

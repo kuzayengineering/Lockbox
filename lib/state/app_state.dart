@@ -44,6 +44,7 @@ class RestoreResult {
 class AppState extends ChangeNotifier with WidgetsBindingObserver {
   AppState() {
     WidgetsBinding.instance.addObserver(this);
+    Native.onPaused = _leftScreen;
   }
 
   Phase phase = Phase.loading;
@@ -174,41 +175,33 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _player ??= MediaPlayer.create(vault, server: _server);
 
   // ----------------------------------------------------------- auto-lock
+  //
+  // Lockbox locks the moment it leaves the screen: home button, recent-apps
+  // button, switching apps, or the screen turning off. On Android the signal
+  // comes straight from the system (Native.onPaused); on Windows, when the
+  // window is minimised. Pulling down the notification shade does not lock.
 
-  DateTime? _backgroundSince;
   int _externalActivity = 0;
 
-  /// Runs [action] (e.g. a system file picker) without auto-locking while
-  /// the other screen is open.
+  /// Runs [action] (e.g. a system file picker) without locking while the
+  /// other screen is open.
   Future<T> external<T>(Future<T> Function() action) async {
     _externalActivity++;
     try {
       return await action();
     } finally {
       _externalActivity--;
-      _backgroundSince = null;
     }
+  }
+
+  void _leftScreen() {
+    if (isUnlocked && _externalActivity == 0) lock();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!isUnlocked || _externalActivity > 0) return;
-    switch (state) {
-      case AppLifecycleState.hidden:
-      case AppLifecycleState.paused:
-        _backgroundSince ??= DateTime.now();
-        _player?.pause();
-        if (settings.autoLockSeconds == 0) lock();
-      case AppLifecycleState.resumed:
-        final since = _backgroundSince;
-        _backgroundSince = null;
-        if (since != null &&
-            DateTime.now().difference(since).inSeconds >=
-                settings.autoLockSeconds) {
-          lock();
-        }
-      default:
-        break;
+    if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
+      _leftScreen();
     }
   }
 

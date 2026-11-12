@@ -8,13 +8,6 @@ import 'common.dart';
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
-  static const _lockOptions = <int, String>{
-    0: 'Immediately',
-    30: 'After 30 seconds',
-    60: 'After 1 minute',
-    300: 'After 5 minutes',
-    900: 'After 15 minutes',
-  };
 
   @override
   Widget build(BuildContext context) {
@@ -40,30 +33,11 @@ class SettingsScreen extends StatelessWidget {
               subtitle: const Text('Instant – files don\'t need re-encrypting'),
               onTap: () => _changePasscode(context),
             ),
-            ListTile(
-              leading: const Icon(Icons.timer_outlined),
-              title: const Text('Auto-lock'),
-              subtitle: Text(_lockOptions[s.autoLockSeconds] ?? '${s.autoLockSeconds} s'),
-              onTap: () async {
-                final v = await showDialog<int>(
-                  context: context,
-                  builder: (ctx) => SimpleDialog(
-                    title: const Text('Lock when Lockbox is in the background'),
-                    children: [
-                      for (final e in _lockOptions.entries)
-                        SimpleDialogOption(
-                          onPressed: () => Navigator.pop(ctx, e.key),
-                          child: Row(children: [
-                            Icon(e.key == s.autoLockSeconds ? Icons.radio_button_checked : Icons.radio_button_off),
-                            const SizedBox(width: 12),
-                            Text(e.value),
-                          ]),
-                        ),
-                    ],
-                  ),
-                );
-                if (v != null) await app.updateSettings((x) => x.autoLockSeconds = v);
-              },
+            const ListTile(
+              leading: Icon(Icons.timer_outlined),
+              title: Text('Locks immediately'),
+              subtitle: Text('Lockbox locks as soon as you leave it: home button, '
+                  'recent apps, switching apps, or the screen turning off.'),
             ),
             const ListTile(
               leading: Icon(Icons.screenshot_monitor),

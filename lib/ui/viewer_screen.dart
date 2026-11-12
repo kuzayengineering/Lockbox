@@ -45,6 +45,79 @@ class _ViewerScreenState extends State<ViewerScreen> {
   MediaItem get _item => _items[_index];
   MediaPlayer get _player => _app.player;
 
+  // ---- video gestures: drag up/down on the right = volume, left = brightness
+  _Level? _adjusting; // during a drag on a video
+  _Level _levelKind = _Level.volume; // what the indicator shows
+  double _level = 0;
+  bool _levelReady = false;
+  bool _levelVisible = false;
+  Timer? _levelHide;
+
+  void _onDragStart(DragStartDetails d) {
+    _adjusting = null;
+    if (_item.kind != MediaKind.video || _zoomed) return;
+    final left = d.localPosition.dx < MediaQuery.of(context).size.width / 2;
+    final kind = left ? _Level.brightness : _Level.volume;
+    _adjusting = kind;
+    if (kind == _Level.brightness && !Native.isAndroid) return; // Windows: no screen brightness
+    _levelHide?.cancel();
+    _levelReady = false;
+    final Future<double?> current = kind == _Level.brightness
+        ? Native.brightness()
+        : Native.isAndroid
+            ? Native.mediaVolume()
+            : Future.value(_player.state.value.volume);
+    current.then((v) {
+      if (!mounted) return;
+      setState(() {
+        _level = v ?? 0.5;
+        _levelReady = true;
+        _levelKind = kind;
+        _levelVisible = true;
+      });
+    });
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    final kind = _adjusting;
+    if (kind == null) {
+      if (!_zoomed) setState(() => _drag += d.delta.dy);
+      return;
+    }
+    if (!_levelReady) return;
+    final h = MediaQuery.of(context).size.height;
+    _level = (_level - d.delta.dy / (h * 0.6)).clamp(0.0, 1.0);
+    if (kind == _Level.brightness) {
+      Native.setBrightness(_level);
+    } else if (Native.isAndroid) {
+      Native.setMediaVolume(_level);
+    } else {
+      _player.setVolume(_level);
+    }
+    setState(() => _levelVisible = true);
+  }
+
+  void _onDragEnd(DragEndDetails d) {
+    if (_adjusting != null) {
+      _adjusting = null;
+      _levelHide?.cancel();
+      _levelHide = Timer(const Duration(milliseconds: 700), () {
+        if (mounted) setState(() => _levelVisible = false);
+      });
+      return;
+    }
+    if (_zoomed) return;
+    final v = d.primaryVelocity ?? 0;
+    if (_drag > 120 || v > 900) {
+      Navigator.pop(context);
+    } else if (_drag < -80 || v < -900) {
+      setState(() => _drag = 0);
+      _showInfo();
+    } else {
+      setState(() => _drag = 0);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -54,6 +127,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _levelHide?.cancel();
+    Native.resetBrightness();
     if (_app.isUnlocked && _app.hasPlayer) _player.stop();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _pages.dispose();
@@ -154,20 +229,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
         backgroundColor: Colors.black.withValues(alpha: 1 - dismissProgress),
         body: Stack(children: [
           GestureDetector(
-            onVerticalDragUpdate: _zoomed ? null : (d) => setState(() => _drag += d.delta.dy),
-            onVerticalDragEnd: _zoomed
-                ? null
-                : (d) {
-                    final v = d.primaryVelocity ?? 0;
-                    if (_drag > 120 || v > 900) {
-                      Navigator.pop(context);
-                    } else if (_drag < -80 || v < -900) {
-                      setState(() => _drag = 0);
-                      _showInfo();
-                    } else {
-                      setState(() => _drag = 0);
-                    }
-                  },
+            onVerticalDragStart: _onDragStart,
+            onVerticalDragUpdate: _onDragUpdate,
+            onVerticalDragEnd: _onDragEnd,
             child: Transform.translate(
               offset: Offset(0, _drag > 0 ? _drag : _drag / 4),
               child: Transform.scale(
@@ -210,6 +274,19 @@ class _ViewerScreenState extends State<ViewerScreen> {
               ),
             ),
           ),
+          // ---- volume / brightness indicator
+          IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: _levelVisible ? 1 : 0,
+              duration: const Duration(milliseconds: 150),
+              child: Align(
+                alignment: _levelKind == _Level.brightness
+                    ? const Alignment(-0.75, 0)
+                    : const Alignment(0.75, 0),
+                child: _LevelIndicator(kind: _levelKind, value: _level),
+              ),
+            ),
+          ),
           // ---- top bar
           Positioned(
             top: 0,
@@ -220,11 +297,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
               duration: const Duration(milliseconds: 180),
               child: IgnorePointer(
                 ignoring: !_chrome,
-                child: _TopBar(
-                  item: item,
-                  position: '${_index + 1} / ${_items.length}',
-                  onMenu: _menu,
-                ),
+                child: _TopBar(item: item, onMenu: _menu),
               ),
             ),
           ),
@@ -504,6 +577,47 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
   }
 }
 
+enum _Level { volume, brightness }
+
+/// Pill shown while dragging on a video to change volume or brightness.
+class _LevelIndicator extends StatelessWidget {
+  const _LevelIndicator({required this.kind, required this.value});
+  final _Level kind;
+  final double value;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = kind == _Level.brightness
+        ? (value < 0.34 ? Icons.brightness_low : value < 0.67 ? Icons.brightness_medium : Icons.brightness_high)
+        : (value <= 0.001 ? Icons.volume_off : value < 0.5 ? Icons.volume_down : Icons.volume_up);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+      decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(24)),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, color: Colors.white),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 140,
+          width: 6,
+          child: RotatedBox(
+            quarterTurns: -1,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: value,
+                color: Colors.white,
+                backgroundColor: Colors.white24,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text('${(value * 100).round()}', style: const TextStyle(color: Colors.white, fontSize: 12)),
+      ]),
+    );
+  }
+}
+
 /// Pinch recognizer that claims the touch the moment a second finger lands,
 /// so zooming always beats the gallery's swipe gestures.
 class _PinchRecognizer extends ScaleGestureRecognizer {
@@ -731,14 +845,18 @@ class _AudioPage extends StatelessWidget {
 // --------------------------------------------------------------- chrome
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.item, required this.position, required this.onMenu});
+  const _TopBar({required this.item, required this.onMenu});
   final MediaItem item;
-  final String position;
   final ValueChanged<String> onMenu;
 
   @override
   Widget build(BuildContext context) {
-    final app = context.read<AppState>();
+    final app = context.watch<AppState>();
+    final tags = app.tagsById;
+    final tagNames = [
+      for (final id in item.tagIds)
+        if (tags[id] != null) tags[id]!.name,
+    ]..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -757,14 +875,15 @@ class _TopBar extends StatelessWidget {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(formatDate(item.mediaDate),
                     style: const TextStyle(color: Colors.white, fontSize: 15)),
-                Text(
-                  [
-                    position,
-                    if (item.hdr.isHdr) item.hdr.label,
-                    if (item.fps != null && item.kind == MediaKind.video) '${item.fps!.round()} fps',
-                  ].join(' · '),
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                ),
+                Text(item.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 13)),
+                if (tagNames.isNotEmpty)
+                  Text(tagNames.join(' · '),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white70, fontSize: 11)),
               ]),
             ),
             PopupMenuButton<String>(

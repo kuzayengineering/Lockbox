@@ -1,6 +1,7 @@
 // Gesture tests for the photo viewer: pinch must zoom (not swipe), and a
 // one-finger swipe must still move to the next photo.
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -65,7 +66,7 @@ void main() {
 
   testWidgets('pinch zooms the photo instead of swiping', (tester) async {
     await openViewer(tester);
-    expect(find.text('1 / 2'), findsOneWidget);
+    expect(find.text('photo 0.jpg'), findsOneWidget);
     expect(photoScale(tester), 1.0);
 
     final c = tester.getCenter(find.byType(PageView));
@@ -83,7 +84,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(photoScale(tester), greaterThan(2.0));
-    expect(find.text('1 / 2'), findsOneWidget, reason: 'must not change photo');
+    expect(find.text('photo 0.jpg'), findsOneWidget, reason: 'must not change photo');
     expect(find.byType(ViewerScreen), findsOneWidget, reason: 'must not close');
 
     // Double-tap zooms back out.
@@ -154,7 +155,7 @@ void main() {
       child: MaterialApp(home: ViewerScreen(items: items, initialIndex: 0)),
     ));
     await tester.pump();
-    expect(find.text('Trip notes.txt'), findsOneWidget);
+    expect(find.text('Trip notes.txt'), findsWidgets);
     expect(find.textContaining('Text file'), findsOneWidget);
 
     await tester.tap(find.text('Open'));
@@ -170,17 +171,58 @@ void main() {
     // Unknown type: no reader, explains how to use it.
     await tester.fling(find.byType(PageView), const Offset(-300, 0), 1500);
     await tester.pumpAndSettle();
-    expect(find.text('Plans.xyz'), findsOneWidget);
+    expect(find.text('Plans.xyz'), findsWidgets);
     expect(find.textContaining('can\'t show this kind of file'), findsOneWidget);
     expect(find.text('Open'), findsNothing);
     await tester.runAsync(app.lock);
+  });
+
+  testWidgets('top bar shows name and tags; tag list puts item tags first', (tester) async {
+    await openViewer(tester);
+    final v = app.vault;
+    final zebra = v.createTag('Zebra');
+    v.createTag('Apple');
+    final mango = v.createTag('Mango');
+    v.data.items.first.tagIds.addAll({zebra.id, mango.id});
+    await tester.runAsync(() => app.changed());
+    await tester.pump();
+    expect(find.text('photo 0.jpg'), findsOneWidget);
+    expect(find.text('Mango · Zebra'), findsOneWidget);
+
+    await tester.tap(find.text('Tags'));
+    await tester.pumpAndSettle();
+    final y = {
+      for (final n in ['Mango', 'Zebra', 'Apple'])
+        n: tester.getTopLeft(find.descendant(
+                of: find.byType(CheckboxListTile), matching: find.text(n)))
+            .dy,
+    };
+    expect(y['Mango']! < y['Zebra']!, isTrue);
+    expect(y['Zebra']! < y['Apple']!, isTrue, reason: 'tags on the item come first');
+    await tester.runAsync(app.lock);
+  });
+
+  testWidgets('locks as soon as the app is hidden, but not during a picker', (tester) async {
+    await openViewer(tester);
+    final picker = Completer<void>();
+    final during = app.external(() => picker.future);
+    app.didChangeAppLifecycleState(AppLifecycleState.hidden);
+    expect(app.isUnlocked, isTrue, reason: 'own file picker is open');
+    picker.complete();
+    await tester.runAsync(() => during);
+    app.didChangeAppLifecycleState(AppLifecycleState.hidden);
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pump();
+    expect(app.isUnlocked, isFalse);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 5));
   });
 
   testWidgets('one-finger swipe still moves to the next photo', (tester) async {
     await openViewer(tester);
     await tester.fling(find.byType(PageView), const Offset(-300, 0), 1500);
     await tester.pumpAndSettle();
-    expect(find.text('2 / 2'), findsOneWidget);
+    expect(find.text('photo 1.jpg'), findsOneWidget);
     await tester.runAsync(app.lock);
   });
 }

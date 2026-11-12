@@ -43,6 +43,31 @@ class OpenedFile {
 
 class Native {
   static const _ch = MethodChannel('lockbox/native');
+
+  /// Called when Android says Lockbox left the screen (lock immediately).
+  static set onPaused(void Function()? f) {
+    _onPaused = f;
+    if (isAndroid) {
+      _ch.setMethodCallHandler((call) async {
+        if (call.method == 'paused') _onPaused?.call();
+      });
+    }
+  }
+
+  static void Function()? _onPaused;
+
+  // ---- video gestures (Android): media volume and screen brightness, 0..1
+  static Future<double?> mediaVolume() async =>
+      isAndroid ? (await _ch.invokeMethod<num>('getMediaVolume'))?.toDouble() : null;
+  static Future<void> setMediaVolume(double v) =>
+      _ch.invokeMethod('setMediaVolume', {'value': v});
+  static Future<double?> brightness() async =>
+      isAndroid ? (await _ch.invokeMethod<num>('getBrightness'))?.toDouble() : null;
+  static Future<void> setBrightness(double v) =>
+      _ch.invokeMethod('setBrightness', {'value': v});
+  static Future<void> resetBrightness() async {
+    if (isAndroid) await _ch.invokeMethod('resetBrightness');
+  }
   static bool get isAndroid => Platform.isAndroid;
 
   static const _hdr = MethodChannel('lockbox/hdr');

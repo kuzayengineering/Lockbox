@@ -17,6 +17,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -36,6 +37,7 @@ import kotlin.math.max
 class MainActivity : FlutterActivity() {
 
     private var player: LockboxPlayer? = null
+    private var nativeChannel: MethodChannel? = null
     private val io = Executors.newFixedThreadPool(2)
     private val main = Handler(Looper.getMainLooper())
     private val pending = HashMap<Int, (Intent?) -> Unit>()
@@ -74,6 +76,14 @@ class MainActivity : FlutterActivity() {
         // Volume buttons always control media volume in Lockbox (not the
         // ringer), even when nothing is playing at that moment.
         volumeControlStream = AudioManager.STREAM_MUSIC
+        // Recent-apps switcher shows no picture of Lockbox at all.
+        if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
+    }
+
+    /** Leaving the screen (home, recents, other app, screen off): lock now. */
+    override fun onPause() {
+        super.onPause()
+        nativeChannel?.invokeMethod("paused", null)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -85,7 +95,8 @@ class MainActivity : FlutterActivity() {
             .registerViewFactory("lockbox/video_view", PlayerViewFactory(p))
         flutterEngine.platformViewsController.registry
             .registerViewFactory("lockbox/hdr_image", HdrImageFactory(this, messenger))
-        MethodChannel(messenger, "lockbox/native").setMethodCallHandler { call, result ->
+        nativeChannel = MethodChannel(messenger, "lockbox/native")
+        nativeChannel!!.setMethodCallHandler { call, result ->
             try {
                 handle(call, result)
             } catch (e: Exception) {
@@ -294,6 +305,40 @@ class MainActivity : FlutterActivity() {
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             // "Save frame": full-resolution still from an encrypted video.
+            // Video gestures: media volume and screen brightness (0..1).
+            "getMediaVolume" -> {
+                val am = getSystemService(AUDIO_SERVICE) as AudioManager
+                val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                result.success(am.getStreamVolume(AudioManager.STREAM_MUSIC).toDouble() / max)
+            }
+            "setMediaVolume" -> {
+                val am = getSystemService(AUDIO_SERVICE) as AudioManager
+                val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                val v = (call.argument<Number>("value") ?: 0).toDouble().coerceIn(0.0, 1.0)
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(v * max).toInt(), 0)
+                result.success(null)
+            }
+            "getBrightness" -> {
+                val own = window.attributes.screenBrightness
+                val v = if (own >= 0f) own.toDouble() else try {
+                    Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255.0
+                } catch (_: Exception) {
+                    0.5
+                }
+                result.success(v)
+            }
+            "setBrightness" -> {
+                val v = (call.argument<Number>("value") ?: 0.5).toFloat().coerceIn(0.01f, 1f)
+                window.attributes = window.attributes.apply { screenBrightness = v }
+                result.success(null)
+            }
+            "resetBrightness" -> {
+                window.attributes = window.attributes.apply {
+                    screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                }
+                result.success(null)
+            }
+
             "grabFrame" -> {
                 val blob = call.argument<String>("blob")!!
                 val key = call.argument<ByteArray>("key")!!
