@@ -51,6 +51,8 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # 64-bit ARM only (every phone from the last 6+ years). Including the
+      # 32-bit and x86 copies tripled the size of the app for no benefit.
       - name: Signing key
         id: key
         env:
@@ -68,7 +70,7 @@ jobs:
           fi
       - run: flutter pub get
       - run: >
-          flutter build apk --release
+          flutter build apk --release --target-platform android-arm64
           --build-name=$VERSION --build-number=$BUILD_NUMBER
           --dart-define=LOCKBOX_VERSION=$VERSION
       - run: cp build/app/outputs/flutter-apk/app-release.apk "${{ steps.key.outputs.name }}"
