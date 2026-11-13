@@ -24,6 +24,24 @@ env:
   BUILD_NUMBER: "${{ github.run_number }}"
 
 jobs:
+  # Creates a draft release; the app jobs upload straight into it (no
+  # GitHub artifact storage, which has a small quota). Published at the end
+  # only if everything succeeded.
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # remove drafts left by earlier failed builds
+          gh release list --limit 50 --json tagName,isDraft --jq '.[]|select(.isDraft)|.tagName' |
+          while read -r tag; do gh release delete "$tag" -y || true; done
+          gh release create "v$VERSION" --draft --target "$GITHUB_SHA" \
+            --title "Lockbox $VERSION" \
+            --notes "Built automatically from commit ${GITHUB_SHA::7} on $(date -u +'%Y-%m-%d %H:%M UTC')."
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -39,6 +57,7 @@ jobs:
       - run: flutter test
 
   android:
+    needs: prepare
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,12 +94,13 @@ jobs:
           --dart-define=LOCKBOX_VERSION=$VERSION
       - run: cp build/app/outputs/flutter-apk/app-release.apk "${{ steps.key.outputs.name }}"
       - run: rm -f android/key.properties android/app/lockbox-release.jks
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Lockbox-android
-          path: ${{ steps.key.outputs.name }}
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v$VERSION" "${{ steps.key.outputs.name }}" --clobber
 
   windows:
+    needs: prepare
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,31 +117,25 @@ jobs:
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath Lockbox-windows.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Lockbox-windows
-          path: Lockbox-windows.zip
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v$VERSION" Lockbox-windows.zip --clobber
 
   release:
     needs: [test, android, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete latest-build --cleanup-tag -y || true
-          gh release create "v$VERSION" Lockbox-android*.apk Lockbox-windows.zip \
-            --target "$GITHUB_SHA" --latest --title "Lockbox $VERSION" \
-            --notes "Built automatically from commit ${GITHUB_SHA::7} on $(date -u +'%Y-%m-%d %H:%M UTC')."
+        run: gh release edit "v$VERSION" --draft=false --latest
       - name: Keep only the 5 newest releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release list --limit 100 --json tagName,createdAt \
+          gh release list --limit 100 --exclude-drafts --json tagName,createdAt \
             --jq 'sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
           while read -r tag; do gh release delete "$tag" --cleanup-tag -y; done
