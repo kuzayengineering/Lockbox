@@ -105,6 +105,10 @@ abstract class MediaPlayer {
   /// Details about the last captured frame (why it is or isn't HDR).
   String? lastCaptureNote;
 
+  /// Android: the frame as a 10-bit HDR HEIF ({heif, thumbnail, width,
+  /// height, note}). Null elsewhere.
+  Future<Map<String, dynamic>?> captureHeif(MediaItem item, Duration position) async => null;
+
   /// If [allowInterrupt] is false, only methods that don't disturb
   /// playback are used (for automatic thumbnails).
   Future<Uint8List?> captureFrame(MediaItem item, Duration position,
@@ -244,6 +248,23 @@ class _AndroidPlayer extends MediaPlayer {
     try {
       return await const MethodChannel('lockbox/native')
           .invokeMethod<Uint8List>('grabFrame', {
+        'blob': _vault.blobPath(item.blobId),
+        'key': key,
+        'positionMs': position.inMilliseconds,
+      });
+    } finally {
+      key.fillRange(0, key.length, 0);
+      await _ch.invokeMethod('resumeDecoders', {'ms': position.inMilliseconds});
+    }
+  }
+
+  @override
+  Future<Map<String, dynamic>?> captureHeif(MediaItem item, Duration position) async {
+    final key = await _vault.fileKeyFor(item);
+    await _ch.invokeMethod('suspendDecoders'); // the decoder is needed
+    try {
+      return await const MethodChannel('lockbox/native')
+          .invokeMapMethod<String, dynamic>('grabHeif', {
         'blob': _vault.blobPath(item.blobId),
         'key': key,
         'positionMs': position.inMilliseconds,

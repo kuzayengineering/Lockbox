@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
@@ -449,6 +450,16 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// folder inside Lockbox. It is dated like the source video (plus the
   /// moment in the video) and gets the same tags.
   Future<MediaItem?> saveFrame(MediaItem video, Duration position) async {
+    // Setting: HDR videos can be saved as a 10-bit HDR HEIF instead.
+    if (settings.saveFramesAsHeif && video.hdr.isHdr && Native.isAndroid) {
+      try {
+        final r = await _captureHeif(video, position);
+        if (r != null) return await _storeHeifFrame(video, position, r);
+      } catch (e) {
+        player.lastCaptureNote =
+            'HDR HEIF failed (${e is PlatformException ? e.message : e}), saved as JPEG';
+      }
+    }
     final jpeg = await _capture(video, position);
     if (jpeg == null || jpeg.isEmpty) return null;
     final v = vault;
@@ -477,6 +488,50 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       tagIds: {...video.tagIds},
       note: 'Frame at ${formatClock(position)} of “${video.name}”',
       hdr: looksUltraHdr(jpeg) ? HdrFormat.ultraHdr : HdrFormat.none,
+    );
+    v.data.items.add(item);
+    await changed();
+    return item;
+  }
+
+  Future<Map<String, dynamic>?> _captureHeif(MediaItem video, Duration position) {
+    final next = _captureQueue.then((_) => player.captureHeif(video, position));
+    _captureQueue = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
+  Future<MediaItem> _storeHeifFrame(
+      MediaItem video, Duration position, Map<String, dynamic> r) async {
+    final v = vault;
+    final heif = r['heif'] as Uint8List;
+    final thumb = r['thumbnail'] as Uint8List?;
+    final note = (r['note'] as String?) ?? '';
+    player.lastCaptureNote = note;
+    String two(int n) => n.toString().padLeft(2, '0');
+    final stamp = '${two(position.inMinutes)}m${two(position.inSeconds % 60)}s';
+    final base = video.name.contains('.')
+        ? video.name.substring(0, video.name.lastIndexOf('.'))
+        : video.name;
+    final item = MediaItem(
+      id: randomId(8),
+      blobId: await v.storeBytes(heif),
+      thumbId: thumb == null ? null : await v.storeThumbnail(thumb),
+      name: '$base frame $stamp.heic',
+      kind: MediaKind.photo,
+      mimeType: 'image/heic',
+      sizeBytes: heif.length,
+      addedAt: DateTime.now(),
+      createdAt: video.mediaDate.add(position),
+      width: (r['width'] as num?)?.toInt(),
+      height: (r['height'] as num?)?.toInt(),
+      folderId: v.topFolderNamed('Screenshots').id,
+      tagIds: {...video.tagIds},
+      note: 'Frame at ${formatClock(position)} of “${video.name}”',
+      hdr: note.contains('HDR10')
+          ? HdrFormat.hdr10
+          : note.contains('HLG')
+              ? HdrFormat.hlg
+              : video.hdr,
     );
     v.data.items.add(item);
     await changed();

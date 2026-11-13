@@ -85,6 +85,16 @@ class SettingsScreen extends StatelessWidget {
             ),
 
             section('Playback'),
+            if (Native.isAndroid)
+              SwitchListTile(
+                secondary: const Icon(Icons.hdr_on),
+                title: const Text('Save frames of HDR videos as HDR HEIF'),
+                subtitle: Text(s.saveFramesAsHeif
+                    ? '10-bit HEIF with the video\'s own HDR picture (.heic)'
+                    : 'Normal JPEG photo (Android\'s own conversion)'),
+                value: s.saveFramesAsHeif,
+                onChanged: (v) => app.updateSettings((x) => x.saveFramesAsHeif = v),
+              ),
             SwitchListTile(
               secondary: const Icon(Icons.repeat),
               title: const Text('Loop videos'),

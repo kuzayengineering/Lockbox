@@ -493,7 +493,7 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
   void initState() {
     super.initState();
     _anim.addListener(() => _tc.value = _zoomAnim!.value);
-    if (widget.item.hdr == HdrFormat.ultraHdr) {
+    if (widget.item.hdr.isHdr) {
       Native.hdrPhotoDisplay().then((ok) {
         if (mounted && ok) setState(() => _hdrCapable = true);
       });
@@ -983,9 +983,9 @@ class _PlaybackBarState extends State<_PlaybackBar> {
       final String msg;
       if (saved == null) {
         msg = 'Couldn\'t capture this frame – please try again';
-      } else if (saved.hdr == HdrFormat.ultraHdr) {
-        msg = 'Frame saved to Screenshots (Ultra HDR'
-            '${note == null || note.isEmpty ? '' : ', $note'})';
+      } else if (saved.mimeType == 'image/heic') {
+        msg = 'Frame saved to Screenshots as HDR HEIF'
+            '${note == null || note.isEmpty ? '' : ' ($note)'}';
       } else if (note != null && note.isNotEmpty) {
         msg = 'Frame saved to Screenshots (standard photo: $note)';
       } else {

@@ -194,6 +194,7 @@ class VaultSettings {
     this.autoTagFromNames = true,
     this.tagRulesVersion = 0,
     this.hdrScanVersion = 0,
+    this.saveFramesAsHeif = false,
   });
 
   /// How long the app may be in the background before it locks.
@@ -224,6 +225,9 @@ class VaultSettings {
   /// Whether existing photos have been checked for Ultra HDR.
   int hdrScanVersion;
 
+  /// Save frames of HDR videos as 10-bit HDR HEIF instead of JPEG.
+  bool saveFramesAsHeif;
+
   Map<String, dynamic> toJson() => {
         'autoLock': autoLockSeconds,
         'cols': gridColumns,
@@ -236,6 +240,7 @@ class VaultSettings {
         'autoTag': autoTagFromNames,
         'tagRules': tagRulesVersion,
         'hdrScan': hdrScanVersion,
+        'frameHeif': saveFramesAsHeif,
       };
 
   factory VaultSettings.fromJson(Map<String, dynamic>? j) => VaultSettings(
@@ -250,6 +255,7 @@ class VaultSettings {
         autoTagFromNames: (j?['autoTag'] as bool?) ?? true,
         tagRulesVersion: (j?['tagRules'] as int?) ?? 0,
         hdrScanVersion: (j?['hdrScan'] as int?) ?? 0,
+        saveFramesAsHeif: (j?['frameHeif'] as bool?) ?? false,
       );
 }
 

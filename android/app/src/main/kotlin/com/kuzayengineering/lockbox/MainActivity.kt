@@ -371,6 +371,29 @@ class MainActivity : FlutterActivity() {
                 result.success(null)
             }
 
+            // "Save frame" as a 10-bit HDR HEIF (Android 13+).
+            "grabHeif" -> {
+                val blob = call.argument<String>("blob")!!
+                val key = call.argument<ByteArray>("key")!!
+                val positionMs = (call.argument<Number>("positionMs") ?: 0).toLong()
+                if (Build.VERSION.SDK_INT < 33) {
+                    result.error("native", "10-bit HEIF needs Android 13 or newer", null)
+                    return
+                }
+                background(result) {
+                    val ds = EncryptedMediaDataSource(File(blob), key)
+                    try {
+                        val r = HdrHeif.saveFrame(ds, positionMs * 1000, cacheDir)
+                        mapOf(
+                            "heif" to r.heif, "thumbnail" to r.thumbnail,
+                            "width" to r.width, "height" to r.height, "note" to r.note,
+                        )
+                    } finally {
+                        try { ds.close() } catch (_: Exception) {}
+                    }
+                }
+            }
+
             "grabFrame" -> {
                 val blob = call.argument<String>("blob")!!
                 val key = call.argument<ByteArray>("key")!!
