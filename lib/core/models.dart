@@ -245,7 +245,7 @@ class VaultSettings {
 
   factory VaultSettings.fromJson(Map<String, dynamic>? j) => VaultSettings(
         autoLockSeconds: (j?['autoLock'] as int?) ?? 30,
-        gridColumns: (j?['cols'] as int?) ?? 4,
+        gridColumns: ((j?['cols'] as int?) ?? 4).clamp(1, 6),
         loopVideos: (j?['loop'] as bool?) ?? false,
         muteByDefault: (j?['mute'] as bool?) ?? false,
         restoreFolder: j?['restoreDir'] as String?,

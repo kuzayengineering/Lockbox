@@ -93,7 +93,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (ratio > 1.8) cols = _pinchCols - 2;
     if (ratio < 0.75) cols = _pinchCols + 1;
     if (ratio < 0.5) cols = _pinchCols + 2;
-    cols = cols.clamp(1, 8);
+    cols = cols.clamp(1, kMaxGridColumns);
     if (cols != app.settings.gridColumns) {
       app.settings.gridColumns = cols;
       app.changed(save: false);
@@ -352,7 +352,7 @@ class _Grid extends StatelessWidget {
     final q = app.query;
     final sections = <(String?, List<int>)>[];
     if (q.sort.isDate) {
-      final byMonth = columns >= 6;
+      final byMonth = columns >= kMonthGridColumns;
       String? last;
       for (var i = 0; i < items.length; i++) {
         final d = q.sort == SortField.dateAdded ? items[i].addedAt : items[i].mediaDate;
@@ -366,7 +366,7 @@ class _Grid extends StatelessWidget {
     } else {
       sections.add((null, [for (var i = 0; i < items.length; i++) i]));
     }
-    final gap = columns >= 6 ? 1.0 : 2.0;
+    final gap = columns >= kMonthGridColumns ? 1.0 : 2.0;
     return Scrollbar(
       child: CustomScrollView(
         slivers: [
@@ -418,7 +418,7 @@ class _Tile extends StatelessWidget {
     final item = items[index];
     final selected = app.selection.contains(item.id);
     final selecting = app.selection.isNotEmpty;
-    final small = app.settings.gridColumns >= 6;
+    final small = app.settings.gridColumns >= kMonthGridColumns;
     return GestureDetector(
       onTap: () {
         if (selecting) {
@@ -458,21 +458,21 @@ class _Tile extends StatelessWidget {
             top: small ? 3 : 6,
             right: small ? 3 : 6,
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              if (!small && item.durationMs != null) ...[
+              if (item.durationMs != null) ...[
                 Text(
                   formatDuration(Duration(milliseconds: item.durationMs!)),
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: Colors.white,
-                      fontSize: 13,
+                      fontSize: small ? 11 : 13,
                       fontWeight: FontWeight.w600,
                       shadows: _tileShadow),
                 ),
-                const SizedBox(width: 4),
+                SizedBox(width: small ? 2 : 4),
               ],
               Icon(
                 item.kind == MediaKind.audio ? Icons.music_note : Icons.play_circle_outline,
                 color: Colors.white,
-                size: small ? 16 : 22,
+                size: small ? 15 : 22,
                 shadows: _tileShadow,
               ),
             ]),
@@ -520,6 +520,11 @@ class _Tile extends StatelessWidget {
     );
   }
 }
+
+/// Pinching out stops at this many photos per row (month view starts at
+/// [kMonthGridColumns]); keeps month thumbnails a comfortable size.
+const kMaxGridColumns = 6;
+const kMonthGridColumns = 5;
 
 const _tileShadow = [Shadow(blurRadius: 4, color: Colors.black54)];
 
