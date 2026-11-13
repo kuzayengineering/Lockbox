@@ -17,7 +17,6 @@ import 'package:media_kit_video/media_kit_video.dart' as mkv;
 import '../core/media_server.dart';
 import '../core/models.dart';
 import '../core/vault.dart';
-import 'native.dart';
 
 @immutable
 class PlaybackState {
@@ -230,37 +229,25 @@ class _AndroidPlayer extends MediaPlayer {
   @override
   Future<Uint8List?> captureFrame(MediaItem item, Duration position,
       {bool allowInterrupt = true}) async {
-    // HDR video on Android 14+: decode the original frame from the file and
-    // save it as Ultra HDR. Otherwise: copy what's on screen (instant).
-    final hdrVideo = item.hdr.isHdr && await Native.androidSdk() >= 34;
-    Uint8List? shown;
-    if (!hdrVideo || !allowInterrupt) {
-      try {
-        shown = await _ch.invokeMethod<Uint8List>('captureDisplayed');
-      } catch (_) {}
+    // 1. Copy what's on screen, using Android's own conversion to a normal
+    //    photo (instant, no second video decoder needed).
+    try {
+      final shown = await _ch.invokeMethod<Uint8List>('captureDisplayed');
       if (shown != null && shown.isNotEmpty) return shown;
-      if (!allowInterrupt) return null;
-    }
-    // Free the player's decoder, extract the frame from the file, then put
-    // the video back where it was (paused).
+    } catch (_) {}
+    if (!allowInterrupt) return null;
+    // 2. Fallback: free the player's decoder, extract the frame from the
+    //    file, then put the video back where it was (paused).
     final key = await _vault.fileKeyFor(item);
     await _ch.invokeMethod('suspendDecoders');
     lastCaptureNote = null;
     try {
-      final bytes = await const MethodChannel('lockbox/native')
+      return await const MethodChannel('lockbox/native')
           .invokeMethod<Uint8List>('grabFrame', {
         'blob': _vault.blobPath(item.blobId),
         'key': key,
         'positionMs': position.inMilliseconds,
-        'hdr': hdrVideo,
-        'transfer': item.hdr.name,
       });
-      if (hdrVideo) {
-        lastCaptureNote = await const MethodChannel('lockbox/hdr')
-            .invokeMethod<String>('lastNote')
-            .catchError((_) => null);
-      }
-      return bytes;
     } finally {
       key.fillRange(0, key.length, 0);
       await _ch.invokeMethod('resumeDecoders', {'ms': position.inMilliseconds});
