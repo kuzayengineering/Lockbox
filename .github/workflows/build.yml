@@ -1,7 +1,8 @@
 # Builds Lockbox for Android on every push to main, runs the tests, and
 # publishes a numbered release (v1.0.<build number>) on the repository's
 # Releases page. Obtainium watches these releases to update the Android app.
-# Only the 5 newest releases are kept.
+# The 5 newest releases are kept, plus the newest release that has a
+# Windows download (never deleted, however old).
 #
 # Windows is built only on request, to save GitHub Actions minutes (Windows
 # minutes count double): put "[windows]" in the commit message, or start the
@@ -144,10 +145,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "v$VERSION" --draft=false --latest
-      - name: Keep only the 5 newest releases
+      - name: Keep the 5 newest releases and the latest Windows release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release list --limit 100 --exclude-drafts --json tagName,createdAt \
-            --jq 'sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
-          while read -r tag; do gh release delete "$tag" --cleanup-tag -y; done
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '[.[] | select(.draft | not)] | sort_by(.created_at) | reverse' > releases.json
+          # The newest release that has a Windows download is never deleted.
+          keep_windows=$(jq -r '[.[] | select(any(.assets[]; .name == "Lockbox-windows.zip"))][0].tag_name // ""' releases.json)
+          echo "Keeping latest Windows release: ${keep_windows:-none}"
+          jq -r '.[5:][].tag_name' releases.json | while read -r tag; do
+            if [ "$tag" = "$keep_windows" ]; then continue; fi
+            gh release delete "$tag" --cleanup-tag -y
+          done
