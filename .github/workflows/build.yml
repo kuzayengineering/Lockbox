@@ -1,7 +1,11 @@
-# Builds Lockbox for Android and Windows on every push to main, runs the
-# tests, and publishes a numbered release (v1.0.<build number>) on the
-# repository's Releases page. Obtainium watches these releases to update
-# the Android app. Only the 5 newest releases are kept.
+# Builds Lockbox for Android on every push to main, runs the tests, and
+# publishes a numbered release (v1.0.<build number>) on the repository's
+# Releases page. Obtainium watches these releases to update the Android app.
+# Only the 5 newest releases are kept.
+#
+# Windows is built only on request, to save GitHub Actions minutes (Windows
+# minutes count double): put "[windows]" in the commit message, or start the
+# workflow by hand (Actions > Build > Run workflow).
 #
 # Android signing: add two repository secrets (Settings > Secrets and
 # variables > Actions):
@@ -107,6 +111,7 @@ jobs:
 
   windows:
     needs: prepare
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[windows]')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -131,6 +136,7 @@ jobs:
 
   release:
     needs: [test, android, windows]
+    if: always() && needs.test.result == 'success' && needs.android.result == 'success' && (needs.windows.result == 'success' || needs.windows.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
