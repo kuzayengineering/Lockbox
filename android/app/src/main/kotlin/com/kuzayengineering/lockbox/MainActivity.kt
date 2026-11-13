@@ -18,6 +18,7 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.system.Os
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -175,6 +176,16 @@ class MainActivity : FlutterActivity() {
      * "DCIM/Camera/", so it can be put back there when restored.
      */
     private fun originalFolder(uri: Uri): String? {
+        // 1. The real file behind the picked document. Works for the picker's
+        //    Images / Videos / Downloads / Recent views without needing any
+        //    media permission (Lockbox has none).
+        try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                val real = Os.readlink("/proc/self/fd/${pfd.fd}")
+                relativeFolderOf(real)?.let { return it }
+            }
+        } catch (_: Exception) {}
+        // 2. Phone-storage browsing: the document id contains the path.
         try {
             if (DocumentsContract.isDocumentUri(this, uri) &&
                 uri.authority == "com.android.externalstorage.documents") {
@@ -192,6 +203,24 @@ class MainActivity : FlutterActivity() {
                 }
             }
         } catch (_: Exception) {}
+        return null
+    }
+
+    /** "/storage/emulated/0/DCIM/Camera/x.jpg" -> "DCIM/Camera/" (null if not shared storage). */
+    private fun relativeFolderOf(path: String): String? {
+        val roots = listOf(
+            Regex("^/storage/emulated/\\d+/"),
+            Regex("^/storage/[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}/"),
+            Regex("^/mnt/user/\\d+/emulated/\\d+/"),
+            Regex("^/data/media/\\d+/"),
+            Regex("^/sdcard/"),
+        )
+        for (r in roots) {
+            val m = r.find(path) ?: continue
+            val rest = path.substring(m.range.last + 1)
+            val slash = rest.lastIndexOf('/')
+            return if (slash > 0) rest.substring(0, slash + 1) else ""
+        }
         return null
     }
 

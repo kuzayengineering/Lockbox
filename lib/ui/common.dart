@@ -370,7 +370,18 @@ Future<void> restoreItems(BuildContext context, List<MediaItem> items) async {
   var dest = RestoreDestination.original;
   var keep = app.settings.keepCopyOnRestore;
   final single = items.length == 1 ? items.first : null;
-  final origLabel = single?.originalLocation;
+  final unknown = items.where((i) => i.originalLocation == null).length;
+  final String origLabel;
+  if (single != null) {
+    origLabel = single.originalLocation ??
+        'Unknown for this file – it will go to the default restore folder (${app.defaultRestoreLabel})';
+  } else if (unknown == 0) {
+    origLabel = 'Where each file came from';
+  } else if (unknown == items.length) {
+    origLabel = 'Unknown for these files – they will go to the default restore folder';
+  } else {
+    origLabel = 'Where each file came from ($unknown unknown – default restore folder)';
+  }
   final go = await showDialog<bool>(
     context: context,
     builder: (ctx) => StatefulBuilder(builder: (ctx, setS) {
@@ -394,7 +405,7 @@ Future<void> restoreItems(BuildContext context, List<MediaItem> items) async {
               RestoreDestination.original,
               Icons.undo,
               'Original location',
-              origLabel ?? (single != null ? 'Unknown – will use default folder' : 'Where each file came from'),
+              origLabel,
             ),
             option(RestoreDestination.defaultFolder, Icons.folder_special_outlined,
                 'Default restore folder', app.defaultRestoreLabel),
