@@ -12,6 +12,7 @@ import 'package:lockbox/core/models.dart';
 import 'package:lockbox/core/vault.dart';
 import 'package:lockbox/state/app_state.dart';
 import 'package:lockbox/ui/file_reader.dart';
+import 'package:lockbox/ui/lock_screen.dart';
 import 'package:lockbox/ui/viewer_screen.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
@@ -252,6 +253,32 @@ void main() {
       expect(app.query.folderId, isNull);
       await app.lock();
     });
+  });
+
+  testWidgets('lock screen focuses the passcode box (keyboard opens)', (tester) async {
+    await tester.runAsync(() async {
+      final dir = p.join(tmp.path, 'lv');
+      final v = await Vault.create(dir, 'pw', params: KdfParams.testing);
+      await v.lock();
+      app = AppState()..vaultDir = dir;
+    });
+    await tester.pumpWidget(ChangeNotifierProvider.value(
+        value: app, child: const MaterialApp(home: LockScreen(setup: false))));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    EditableTextState field() => tester.state<EditableTextState>(find.byType(EditableText));
+    expect(field().widget.focusNode.hasFocus, isTrue);
+
+    // Wrong passcode: focus comes back afterwards.
+    await tester.enterText(find.byType(TextField), 'nope');
+    await tester.runAsync(() async {
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Wrong passcode'), findsOneWidget);
+    expect(field().widget.focusNode.hasFocus, isTrue);
   });
 
   testWidgets('one-finger swipe still moves to the next photo', (tester) async {

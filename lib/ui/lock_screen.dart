@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
@@ -16,8 +17,36 @@ class LockScreen extends StatefulWidget {
   State<LockScreen> createState() => _LockScreenState();
 }
 
-class _LockScreenState extends State<LockScreen> {
+class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
   final _pass = TextEditingController();
+  final _passFocus = FocusNode();
+
+  /// Focus the passcode box and open the keyboard. Done after the screen is
+  /// showing (and again when returning to the app): asking during start-up
+  /// is too early for Android to show the keyboard.
+  void _focusPasscode() {
+    if (!mounted || _busy) return;
+    _passFocus.requestFocus();
+    Future<void>.delayed(const Duration(milliseconds: 200), () {
+      if (mounted && _passFocus.hasFocus) {
+        SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+      }
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _focusPasscode();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _passFocus.dispose();
+    _pass.dispose();
+    super.dispose();
+  }
+
   final _confirm = TextEditingController();
   bool _busy = false;
   bool _obscure = true;
@@ -27,6 +56,8 @@ class _LockScreenState extends State<LockScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focusPasscode());
     if (widget.setup) {
       context.read<AppState>().defaultVaultDir().then((d) {
         if (mounted) setState(() => _dir = d);
@@ -47,7 +78,11 @@ class _LockScreenState extends State<LockScreen> {
     } catch (e) {
       _error = e.toString();
     }
-    if (mounted) setState(() => _busy = false);
+    if (mounted) {
+      setState(() => _busy = false);
+      // e.g. wrong passcode: put the cursor and keyboard back.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _focusPasscode());
+    }
   }
 
   void _unlock() {
@@ -102,6 +137,7 @@ class _LockScreenState extends State<LockScreen> {
                   const SizedBox(height: 24),
                   TextField(
                     controller: _pass,
+                    focusNode: _passFocus,
                     obscureText: _obscure,
                     autofocus: true,
                     enabled: !_busy,
