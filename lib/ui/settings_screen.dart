@@ -26,6 +26,17 @@ class SettingsScreen extends StatelessWidget {
         const TaskBanner(),
         Expanded(
           child: ListView(children: [
+            section('General'),
+            ListTile(
+              leading: const Icon(Icons.home_outlined),
+              title: const Text('Start screen'),
+              subtitle: Text(_startLabel(app)),
+              onTap: () async {
+                final (ok, id) = await pickFolder(context, title: 'Open after unlocking');
+                if (ok) await app.updateSettings((x) => x.startFolderId = id);
+              },
+            ),
+
             section('Security'),
             ListTile(
               leading: const Icon(Icons.password),
@@ -158,6 +169,13 @@ class SettingsScreen extends StatelessWidget {
         ),
       ]),
     );
+  }
+
+  static String _startLabel(AppState app) {
+    final id = app.settings.startFolderId;
+    if (id == null) return 'Library';
+    final f = app.foldersById[id];
+    return f == null ? 'Library (the chosen folder was deleted)' : 'Folder: ${f.name}';
   }
 
   Future<void> _changePasscode(BuildContext context) async {

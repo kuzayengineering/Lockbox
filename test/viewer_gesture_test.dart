@@ -233,6 +233,27 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
   });
 
+  testWidgets('opens the chosen start folder after unlocking', (tester) async {
+    await tester.runAsync(() async {
+      final dir = p.join(tmp.path, 'sv');
+      final v = await Vault.create(dir, 'pw', params: KdfParams.testing);
+      final f = v.createFolder('Work');
+      v.data.settings.startFolderId = f.id;
+      await v.save();
+      await v.lock();
+      app = AppState()..vaultDir = dir;
+      await app.unlock('pw');
+      expect(app.query.folderId, f.id);
+      // Folder deleted -> back to Library.
+      app.vault.deleteFolder(f.id);
+      await app.vault.save();
+      await app.lock();
+      await app.unlock('pw');
+      expect(app.query.folderId, isNull);
+      await app.lock();
+    });
+  });
+
   testWidgets('one-finger swipe still moves to the next photo', (tester) async {
     await openViewer(tester);
     await tester.fling(find.byType(PageView), const Offset(-300, 0), 1500);

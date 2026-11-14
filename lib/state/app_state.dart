@@ -148,7 +148,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _server = await MediaServer.start(v.directory, v.masterKey.bytes);
     }
     selection.clear();
-    query = LibraryQuery(sort: SortField.dateTaken);
+    // Start screen: Library, or the folder chosen in Settings (if it still exists).
+    final start = v.data.settings.startFolderId;
+    final startExists = start != null && v.data.folders.any((f) => f.id == start);
+    query = LibraryQuery(sort: SortField.dateTaken, folderId: startExists ? start : null);
     _invalidate();
     phase = Phase.unlocked;
     notifyListeners();

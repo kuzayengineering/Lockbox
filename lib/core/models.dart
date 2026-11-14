@@ -195,6 +195,7 @@ class VaultSettings {
     this.tagRulesVersion = 0,
     this.hdrScanVersion = 0,
     this.saveFramesAsHeif = false,
+    this.startFolderId,
   });
 
   /// How long the app may be in the background before it locks.
@@ -228,6 +229,9 @@ class VaultSettings {
   /// Save frames of HDR videos as 10-bit HDR HEIF instead of JPEG.
   bool saveFramesAsHeif;
 
+  /// Folder shown first after unlocking (null = Library).
+  String? startFolderId;
+
   Map<String, dynamic> toJson() => {
         'autoLock': autoLockSeconds,
         'cols': gridColumns,
@@ -241,6 +245,7 @@ class VaultSettings {
         'tagRules': tagRulesVersion,
         'hdrScan': hdrScanVersion,
         'frameHeif': saveFramesAsHeif,
+        if (startFolderId != null) 'startFolder': startFolderId,
       };
 
   factory VaultSettings.fromJson(Map<String, dynamic>? j) => VaultSettings(
@@ -256,6 +261,7 @@ class VaultSettings {
         tagRulesVersion: (j?['tagRules'] as int?) ?? 0,
         hdrScanVersion: (j?['hdrScan'] as int?) ?? 0,
         saveFramesAsHeif: (j?['frameHeif'] as bool?) ?? false,
+        startFolderId: j?['startFolder'] as String?,
       );
 }
 
