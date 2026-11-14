@@ -345,12 +345,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // ----------------------------------------------------------- import
 
   Future<ImportResult> importFiles(List<PickedFile> files,
-      {required bool deleteOriginals}) async {
+      {required bool deleteOriginals, bool? autoTag}) async {
     task.value = TaskProgress('Adding ${files.length} file(s)…', total: files.length);
     try {
       return await external(() => Importer(vault).run(
             files,
             deleteOriginals: deleteOriginals,
+            autoTag: autoTag ?? settings.autoTagFromNames,
             folderId: query.folderId,
             onProgress: (d, t, name) {
               task.value = TaskProgress('Encrypting $name', done: d, total: t);

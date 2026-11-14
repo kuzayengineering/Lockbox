@@ -89,13 +89,16 @@ class ImportResult {
 class Importer {
   Importer(this.vault);
   final Vault vault;
+  bool _autoTag = true;
 
   Future<ImportResult> run(
     List<PickedFile> files, {
     required bool deleteOriginals,
+    bool autoTag = true,
     String? folderId,
     void Function(int done, int total, String name)? onProgress,
   }) async {
+    _autoTag = autoTag;
     final result = ImportResult();
     for (var n = 0; n < files.length; n++) {
       final f = files[n];
@@ -218,7 +221,7 @@ class Importer {
       final blobId = await vault.storeFile(opened.path);
       final stored = MediaItem.fromJson({...item.toJson(), 'blob': blobId});
       if (thumb != null) stored.thumbId = await vault.storeThumbnail(thumb);
-      if (vault.data.settings.autoTagFromNames) vault.autoTag(stored);
+      if (_autoTag) vault.autoTag(stored);
       vault.data.items.add(stored);
 
       // ---- original

@@ -17,7 +17,8 @@ import 'package:lockbox/core/models.dart';
 import 'package:lockbox/core/mp4_probe.dart';
 import 'package:lockbox/core/ultra_hdr.dart';
 import 'package:lockbox/core/vault.dart';
-import 'package:lockbox/state/importer.dart' show classify;
+import 'package:lockbox/platform/native.dart' show PickedFile;
+import 'package:lockbox/state/importer.dart' show Importer, classify;
 import 'package:path/path.dart' as p;
 
 Uint8List _data(int n, [int seed = 1]) {
@@ -555,6 +556,28 @@ void main() {
           originalBytes: 10 * 1024 * 1024, quality: CompressQuality.high);
       expect(p.estimatedBytes, lessThanOrEqualTo(10 * 1024 * 1024));
       expect(p.saves, isFalse);
+    });
+  });
+
+  group('import auto-tag switch', () {
+    test('tags from file names only when switched on', () async {
+      final v = await Vault.create(p.join(tmp.path, 'iv'), 'pw',
+          params: KdfParams.testing);
+      PickedFile file(String name) {
+        final f = File(p.join(tmp.path, name))..writeAsStringSync('hello');
+        return PickedFile(name: name, path: f.path, size: 5);
+      }
+
+      await Importer(v).run([file('Beach trip notes.txt')],
+          deleteOriginals: false, autoTag: false);
+      expect(v.data.items.single.tagIds, isEmpty);
+      expect(v.data.tags, isEmpty);
+
+      await Importer(v).run([file('Beach trip plan.txt')],
+          deleteOriginals: false, autoTag: true);
+      final tagged = v.data.items.firstWhere((i) => i.name == 'Beach trip plan.txt');
+      expect(v.data.tags.map((t) => t.name), ['Beach', 'trip', 'plan']);
+      expect(tagged.tagIds.length, 3);
     });
   });
 

@@ -57,7 +57,7 @@ class SettingsScreen extends StatelessWidget {
             SwitchListTile(
               secondary: const Icon(Icons.sell_outlined),
               title: const Text('Tag from file names'),
-              subtitle: const Text('Each word in a file name becomes a tag (numbers are ignored)'),
+              subtitle: const Text('Starting choice for “Add tags from file names” when adding files'),
               value: s.autoTagFromNames,
               onChanged: (v) => app.updateSettings((x) => x.autoTagFromNames = v),
             ),

@@ -274,6 +274,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final files = await app.external(Native.pickMedia);
     if (files.isEmpty || !mounted) return;
     var delete = app.settings.deleteOriginalsOnImport;
+    var autoTag = app.settings.autoTagFromNames;
     final go = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -298,12 +299,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 ),
               ]),
             ),
-            if (app.settings.autoTagFromNames)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text('Words in file names will be added as tags.',
-                    style: TextStyle(fontSize: 12)),
-              ),
+            const Divider(),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Add tags from file names'),
+              subtitle: const Text('Words in each file name become tags'),
+              value: autoTag,
+              onChanged: (v) => setS(() => autoTag = v),
+            ),
           ]),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
@@ -316,7 +319,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (delete != app.settings.deleteOriginalsOnImport) {
       app.settings.deleteOriginalsOnImport = delete;
     }
-    final r = await app.importFiles(files, deleteOriginals: delete);
+    final r = await app.importFiles(files, deleteOriginals: delete, autoTag: autoTag);
     if (!mounted) return;
     final parts = ['Added ${r.added}'];
     if (r.originalsKept > 0) {
