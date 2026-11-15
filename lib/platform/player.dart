@@ -132,11 +132,16 @@ abstract class MediaPlayer {
         ? _stepTarget!
         : s.position.inMicroseconds / 1000;
     var target = base + direction * frameMs;
-    final maxMs = s.duration.inMilliseconds.toDouble();
+    // The last frame starts one frame before the end. Seeking to the very
+    // end leaves the player with no frame to show (the picture flickers),
+    // so stop on the last real frame instead.
+    final lastFrameMs = s.duration.inMilliseconds - frameMs;
     if (target < 0) target = 0;
-    if (maxMs > 0 && target > maxMs) target = maxMs;
-    _stepTarget = target;
+    if (lastFrameMs > 0 && target > lastFrameMs) target = lastFrameMs;
     _stepAt = now;
+    // Already there (first or last frame): don't seek again.
+    if (_stepTarget != null && (target - _stepTarget!).abs() < 0.5) return;
+    _stepTarget = target;
     await seek(Duration(microseconds: (target * 1000).round()));
   }
 
