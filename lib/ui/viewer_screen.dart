@@ -617,6 +617,8 @@ class _PhotoPageState extends State<_PhotoPage> with SingleTickerProviderStateMi
   }
 }
 
+const _textShadow = [Shadow(blurRadius: 4, color: Colors.black)];
+
 enum _Level { volume, brightness }
 
 /// Pill shown while dragging on a video to change volume or brightness.
@@ -897,12 +899,17 @@ class _TopBar extends StatelessWidget {
       for (final id in item.tagIds)
         if (tags[id] != null) tags[id]!.name,
     ]..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    // Dark backing so the text stays readable over bright/white videos:
+    // solid behind the three lines, fading out below them, plus a soft
+    // shadow on the text itself.
     return Container(
+      padding: const EdgeInsets.only(bottom: 28),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Colors.black87, Colors.transparent],
+          colors: [Color(0xD9000000), Color(0xA6000000), Colors.transparent],
+          stops: [0, 0.65, 1],
         ),
       ),
       child: SafeArea(
@@ -914,16 +921,17 @@ class _TopBar extends StatelessWidget {
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(formatDate(item.mediaDate),
-                    style: const TextStyle(color: Colors.white, fontSize: 15)),
+                    style: const TextStyle(color: Colors.white, fontSize: 15, shadows: _textShadow)),
                 Text(item.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 13)),
+                    style: const TextStyle(color: Colors.white, fontSize: 13, shadows: _textShadow)),
                 if (tagNames.isNotEmpty)
                   Text(tagNames.join(' · '),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                      style: const TextStyle(
+                          color: Color(0xE6FFFFFF), fontSize: 11, shadows: _textShadow)),
               ]),
             ),
             PopupMenuButton<String>(
