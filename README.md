@@ -89,20 +89,16 @@ it watches this repository's releases (using a read-only GitHub token stored
 in Obtainium, not in Lockbox), notifies you of new versions and installs them.
 The installed version is shown in Lockbox under *Settings › About*.
 
-### One-time setup: Android signing key (important)
+### Android signing key (already set up)
 
 Android only installs an update over an existing app if both were signed with
-the same key. Uninstalling the app deletes the vault on the phone. Set up a
-permanent key **before you put real files in Lockbox**:
-
-1. On GitHub, open **Actions › Create Android signing key › Run workflow**.
-2. When it finishes, open the run and download **lockbox-signing-key**.
-3. Follow the `README.txt` inside it to add two repository secrets.
-4. Keep the key file and password somewhere safe, then delete the download.
-
-Until this is done, builds are named `Lockbox-android-TEST-ONLY.apk`. Use them
-for trying the app only. Before switching to a properly signed build, uninstall
-the test build after making a backup.
+the same key, and uninstalling the app deletes the vault on the phone. The
+permanent key is stored as two encrypted repository secrets
+(`ANDROID_KEYSTORE_BASE64` and `ANDROID_KEY_PASSWORD`, under *Settings ›
+Secrets and variables › Actions*); they stay private even if the repository is
+public. Keep the backup copy of the key file and its password somewhere safe
+(e.g. a password manager): if the secrets are ever lost, add them again from
+that copy. Without them the build produces a `Lockbox-android-TEST-ONLY.apk`.
 
 ## How it works
 
