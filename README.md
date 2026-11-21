@@ -30,6 +30,13 @@ there are no accounts or cloud servers.
   HDR/HLG/Dolby Vision, 60 fps or more, length, file size, and date range.
 - Search across names, tags and notes.
 - Photo grid grouped by day or month. Pinch to change the grid size.
+- **View** button: Grid or Details (thumbnail with name, tags and details
+  beside it), and choose what's shown: file name, length, frame rate, tags,
+  file size, date taken, HDR badge. In the grid, names and tags appear on the
+  thumbnails at 3 or fewer per row.
+- Views are remembered **per folder**: changing the view inside a folder saves
+  it for that folder only; changing it in Library sets the default (also in
+  *Settings › Default view*).
 
 **Playback (Google Photos style)**
 - Swipe left and right between items. Swipe down to close, swipe up for info.

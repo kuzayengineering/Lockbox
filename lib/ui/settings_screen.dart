@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../platform/native.dart';
 import '../state/app_state.dart';
 import 'common.dart';
+import 'view_sheet.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -35,6 +36,12 @@ class SettingsScreen extends StatelessWidget {
                 final (ok, id) = await pickFolder(context, title: 'Open after unlocking');
                 if (ok) await app.updateSettings((x) => x.startFolderId = id);
               },
+            ),
+            ListTile(
+              leading: const Icon(Icons.grid_view_outlined),
+              title: const Text('Default view'),
+              subtitle: Text(describeView(s.defaultView)),
+              onTap: () => showViewSheet(context, defaultOnly: true),
             ),
 
             section('Security'),

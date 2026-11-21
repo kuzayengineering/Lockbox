@@ -756,6 +756,37 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   // ----------------------------------------------------------- settings
 
+  /// The gallery view in use: the open folder's own view, else the default.
+  ViewPrefs get currentView {
+    final id = query.folderId;
+    return (id == null ? null : settings.folderViews[id]) ?? settings.defaultView;
+  }
+
+  /// True when the open folder has a view of its own.
+  bool get folderHasOwnView =>
+      query.folderId != null && settings.folderViews.containsKey(query.folderId);
+
+  /// Changes the view. Inside a folder this becomes that folder's own view
+  /// (only that folder changes); in the Library it changes the default.
+  Future<void> updateView(void Function(ViewPrefs v) change, {bool save = true}) async {
+    final id = query.folderId;
+    if (id == null) {
+      change(settings.defaultView);
+    } else {
+      final v = settings.folderViews[id] ??= settings.defaultView.copy();
+      change(v);
+    }
+    await changed(save: save);
+  }
+
+  /// Makes the open folder use the default view again.
+  Future<void> resetFolderView() async {
+    final id = query.folderId;
+    if (id == null) return;
+    settings.folderViews.remove(id);
+    await changed();
+  }
+
   Future<void> updateSettings(void Function(VaultSettings s) change) async {
     change(settings);
     await changed();

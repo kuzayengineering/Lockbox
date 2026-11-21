@@ -9,6 +9,7 @@ import '../state/app_state.dart';
 import 'common.dart';
 import 'filter_sheet.dart';
 import 'settings_screen.dart';
+import 'view_sheet.dart';
 import 'viewer_screen.dart';
 
 class LibraryScreen extends StatefulWidget {
@@ -59,7 +60,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   onPointerMove: (e) => _onPointerMove(e, app),
                   onPointerUp: (e) => _endPointer(e.pointer, app),
                   onPointerCancel: (e) => _endPointer(e.pointer, app),
-                  child: _Grid(items: items, columns: app.settings.gridColumns),
+                  child: _Grid(items: items, view: app.currentView),
                 ),
         ),
       ]),
@@ -81,10 +82,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   void _onPointerMove(PointerMoveEvent e, AppState app) {
     _pointers[e.pointer] = e.position;
-    if (_pointers.length != 2) return;
+    if (_pointers.length != 2 || app.currentView.mode != ViewMode.grid) return;
     if (_pinchStart == null) {
       _pinchStart = _spread();
-      _pinchCols = app.settings.gridColumns;
+      _pinchCols = app.currentView.columns;
       return;
     }
     final ratio = _spread() / _pinchStart!;
@@ -94,9 +95,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (ratio < 0.75) cols = _pinchCols + 1;
     if (ratio < 0.5) cols = _pinchCols + 2;
     cols = cols.clamp(1, kMaxGridColumns);
-    if (cols != app.settings.gridColumns) {
-      app.settings.gridColumns = cols;
-      app.changed(save: false);
+    if (cols != app.currentView.columns) {
+      // Inside a folder this becomes the folder's own view.
+      app.updateView((v) => v.columns = cols, save: false);
     }
   }
 
@@ -150,6 +151,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
             if (v is SortField) app.setQuery(q.copyWith(sort: v));
             if (v == 'desc') app.setQuery(q.copyWith(descending: !q.descending));
           },
+        ),
+        IconButton(
+          tooltip: 'View',
+          icon: Icon(app.currentView.mode == ViewMode.details
+              ? Icons.view_list_outlined
+              : Icons.grid_view_outlined),
+          onPressed: () => showViewSheet(context),
         ),
         IconButton(
           tooltip: 'Filter',
@@ -344,18 +352,33 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
 // ------------------------------------------------------------------- grid
 
+void _openViewer(BuildContext context, List<MediaItem> items, int index) {
+  Navigator.of(context).push(PageRouteBuilder(
+    opaque: false,
+    barrierColor: Colors.transparent,
+    transitionDuration: const Duration(milliseconds: 250),
+    reverseTransitionDuration: const Duration(milliseconds: 200),
+    pageBuilder: (_, a, _) => FadeTransition(
+      opacity: a,
+      child: ViewerScreen(items: items, initialIndex: index),
+    ),
+  ));
+}
+
 class _Grid extends StatelessWidget {
-  const _Grid({required this.items, required this.columns});
+  const _Grid({required this.items, required this.view});
   final List<MediaItem> items;
-  final int columns;
+  final ViewPrefs view;
 
   @override
   Widget build(BuildContext context) {
     final app = context.read<AppState>();
     final q = app.query;
+    final details = view.mode == ViewMode.details;
+    final columns = view.columns;
     final sections = <(String?, List<int>)>[];
     if (q.sort.isDate) {
-      final byMonth = columns >= kMonthGridColumns;
+      final byMonth = !details && columns >= kMonthGridColumns;
       String? last;
       for (var i = 0; i < items.length; i++) {
         final d = q.sort == SortField.dateAdded ? items[i].addedAt : items[i].mediaDate;
@@ -381,14 +404,22 @@ class _Grid extends StatelessWidget {
                   child: Text(label, style: Theme.of(context).textTheme.titleSmall),
                 ),
               ),
-            SliverGrid(
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns, mainAxisSpacing: gap, crossAxisSpacing: gap),
-              delegate: SliverChildBuilderDelegate(
-                (context, n) => _Tile(items: items, index: idx[n]),
-                childCount: idx.length,
+            if (details)
+              SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, n) => _DetailRow(items: items, index: idx[n], view: view),
+                  childCount: idx.length,
+                ),
+              )
+            else
+              SliverGrid(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns, mainAxisSpacing: gap, crossAxisSpacing: gap),
+                delegate: SliverChildBuilderDelegate(
+                  (context, n) => _Tile(items: items, index: idx[n], view: view),
+                  childCount: idx.length,
+                ),
               ),
-            ),
           ],
           const SliverToBoxAdapter(child: SizedBox(height: 96)),
         ],
@@ -410,10 +441,32 @@ class _Grid extends StatelessWidget {
   static String _monthLabel(DateTime d) => DateFormat('MMMM y').format(d);
 }
 
+/// Short HDR label for badges.
+String? _hdrBadge(MediaItem item) => !item.hdr.isHdr
+    ? null
+    : switch (item.hdr) {
+        HdrFormat.dolbyVision => 'DV',
+        HdrFormat.ultraHdr => 'HDR',
+        _ => item.hdr.label,
+      };
+
+/// The text details chosen in the view, e.g. ["24.1 MB", "Mar 3, 2026"].
+List<String> _detailBits(MediaItem item, ViewPrefs view, {bool withMedia = false}) => [
+      if (withMedia && view.shows(ViewField.length) && item.durationMs != null)
+        formatDuration(Duration(milliseconds: item.durationMs!)),
+      if (withMedia && view.shows(ViewField.fps) && item.fps != null) '${item.fps!.round()} fps',
+      if (view.shows(ViewField.size)) formatBytes(item.sizeBytes),
+      if (view.shows(ViewField.date)) DateFormat.yMMMd().format(item.mediaDate),
+    ];
+
+String _tagText(MediaItem item, Map<String, Tag> tags) =>
+    [for (final id in item.tagIds) if (tags[id] != null) tags[id]!.name].join(' · ');
+
 class _Tile extends StatelessWidget {
-  const _Tile({required this.items, required this.index});
+  const _Tile({required this.items, required this.index, required this.view});
   final List<MediaItem> items;
   final int index;
+  final ViewPrefs view;
 
   @override
   Widget build(BuildContext context) {
@@ -421,24 +474,29 @@ class _Tile extends StatelessWidget {
     final item = items[index];
     final selected = app.selection.contains(item.id);
     final selecting = app.selection.isNotEmpty;
-    final small = app.settings.gridColumns >= kMonthGridColumns;
+    final small = view.columns >= kMonthGridColumns;
+    // Room for text on the thumbnail only when zoomed in far enough.
+    final roomy = view.columns <= kTextOnTilesColumns;
+    final isFileTile = item.kind == MediaKind.file && item.thumbId == null;
+    final name = roomy && view.shows(ViewField.name) && !isFileTile ? item.name : null;
+    final tags = roomy && view.shows(ViewField.tags) ? _tagText(item, app.tagsById) : '';
+    final bits = roomy ? _detailBits(item, view) : const <String>[];
+    final hasText = name != null || tags.isNotEmpty || bits.isNotEmpty;
+
+    final hdr = view.shows(ViewField.hdr) ? _hdrBadge(item) : null;
+    final fps = view.shows(ViewField.fps) && item.isHighFrameRate;
+    final badges = <Widget>[
+      if (hdr != null) Badge2(hdr),
+      if (hdr != null && fps) const SizedBox(width: 3),
+      if (fps) Badge2('${item.fps!.round()}'),
+      if (item.kind == MediaKind.file && item.thumbId != null)
+        Badge2(item.extension.toUpperCase(), icon: itemIcon(item)),
+    ];
+    const heart = Icon(Icons.favorite, size: 16, color: Colors.white, shadows: _tileShadow);
+    const white = TextStyle(color: Colors.white, shadows: _tileShadow);
+
     return GestureDetector(
-      onTap: () {
-        if (selecting) {
-          app.toggleSelect(item.id);
-        } else {
-          Navigator.of(context).push(PageRouteBuilder(
-            opaque: false,
-            barrierColor: Colors.transparent,
-            transitionDuration: const Duration(milliseconds: 250),
-            reverseTransitionDuration: const Duration(milliseconds: 200),
-            pageBuilder: (_, a, _) => FadeTransition(
-              opacity: a,
-              child: ViewerScreen(items: items, initialIndex: index),
-            ),
-          ));
-        }
-      },
+      onTap: () => selecting ? app.toggleSelect(item.id) : _openViewer(context, items, index),
       onLongPress: () => app.toggleSelect(item.id),
       child: Stack(fit: StackFit.expand, children: [
         AnimatedPadding(
@@ -448,9 +506,7 @@ class _Tile extends StatelessWidget {
             borderRadius: BorderRadius.circular(selected ? 10 : 0),
             child: Hero(
               tag: 'media-${item.id}',
-              child: item.kind == MediaKind.file && item.thumbId == null
-                  ? _FileTile(item: item, small: small)
-                  : MediaThumb(item),
+              child: isFileTile ? _FileTile(item: item, small: small) : MediaThumb(item),
             ),
           ),
         ),
@@ -461,7 +517,7 @@ class _Tile extends StatelessWidget {
             top: small ? 3 : 6,
             right: small ? 3 : 6,
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              if (item.durationMs != null) ...[
+              if (item.durationMs != null && view.shows(ViewField.length)) ...[
                 Text(
                   formatDuration(Duration(milliseconds: item.durationMs!)),
                   style: TextStyle(
@@ -480,34 +536,53 @@ class _Tile extends StatelessWidget {
               ),
             ]),
           ),
-        if (!small) ...[
-          if (item.hdr.isHdr || item.isHighFrameRate)
-            Positioned(
-              bottom: 4,
-              right: 4,
-              child: Row(children: [
-                if (item.hdr.isHdr)
-                  Badge2(switch (item.hdr) {
-                    HdrFormat.dolbyVision => 'DV',
-                    HdrFormat.ultraHdr => 'HDR',
-                    _ => item.hdr.label,
-                  }),
-                if (item.hdr.isHdr && item.isHighFrameRate) const SizedBox(width: 3),
-                if (item.isHighFrameRate) Badge2('${item.fps!.round()}'),
+        if (!small && hasText)
+          // Name, details and tags on a dark fade at the bottom.
+          Positioned(
+            left: selected ? 10 : 0,
+            right: selected ? 10 : 0,
+            bottom: selected ? 10 : 0,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(6, 18, 6, 5),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Color(0xB3000000)],
+                ),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                if (badges.isNotEmpty || item.favorite)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 3),
+                    child: Row(children: [
+                      if (item.favorite) heart,
+                      const Spacer(),
+                      ...badges,
+                    ]),
+                  ),
+                if (name != null)
+                  Text(name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: white.copyWith(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                if (bits.isNotEmpty)
+                  Text(bits.join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: white.copyWith(fontSize: 11)),
+                if (tags.isNotEmpty)
+                  Text(tags,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: white.copyWith(fontSize: 11, color: const Color(0xFFD0D8FF))),
               ]),
             ),
-          if (item.kind == MediaKind.file && item.thumbId != null)
-            Positioned(
-              bottom: 4,
-              right: 4,
-              child: Badge2(item.extension.toUpperCase(), icon: itemIcon(item)),
-            ),
-          if (item.favorite)
-            const Positioned(
-              bottom: 4,
-              left: 4,
-              child: Icon(Icons.favorite, size: 16, color: Colors.white, shadows: _tileShadow),
-            ),
+          )
+        else if (!small) ...[
+          if (badges.isNotEmpty)
+            Positioned(bottom: 4, right: 4, child: Row(children: badges)),
+          if (item.favorite) const Positioned(bottom: 4, left: 4, child: heart),
         ],
         if (selecting)
           Positioned(
@@ -522,6 +597,133 @@ class _Tile extends StatelessWidget {
       ]),
     );
   }
+}
+
+/// Details view row: thumbnail on the left, name, details and tags on the
+/// right.
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({required this.items, required this.index, required this.view});
+  final List<MediaItem> items;
+  final int index;
+  final ViewPrefs view;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    final item = items[index];
+    final selected = app.selection.contains(item.id);
+    final selecting = app.selection.isNotEmpty;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final tags = view.shows(ViewField.tags) ? _tagText(item, app.tagsById) : '';
+    final bits = _detailBits(item, view, withMedia: true);
+    final hdr = view.shows(ViewField.hdr) ? _hdrBadge(item) : null;
+    final isFileTile = item.kind == MediaKind.file && item.thumbId == null;
+
+    return Material(
+      color: selected ? scheme.primaryContainer.withValues(alpha: 0.6) : Colors.transparent,
+      child: InkWell(
+        onTap: () => selecting ? app.toggleSelect(item.id) : _openViewer(context, items, index),
+        onLongPress: () => app.toggleSelect(item.id),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          child: Row(children: [
+            SizedBox(
+              width: 76,
+              height: 76,
+              child: Stack(fit: StackFit.expand, children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Hero(
+                    tag: 'media-${item.id}',
+                    child: isFileTile ? _FileTile(item: item, small: true) : MediaThumb(item),
+                  ),
+                ),
+                if (item.kind == MediaKind.video || item.kind == MediaKind.audio)
+                  Positioned(
+                    top: 3,
+                    right: 3,
+                    child: Icon(
+                      item.kind == MediaKind.audio ? Icons.music_note : Icons.play_circle_outline,
+                      color: Colors.white,
+                      size: 18,
+                      shadows: _tileShadow,
+                    ),
+                  ),
+                if (selecting)
+                  Positioned(
+                    top: 3,
+                    left: 3,
+                    child: Icon(
+                      selected ? Icons.check_circle : Icons.radio_button_unchecked,
+                      color: selected ? scheme.primary : Colors.white,
+                      size: 22,
+                      shadows: _tileShadow,
+                    ),
+                  ),
+              ]),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                if (view.shows(ViewField.name))
+                  Text(item.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500)),
+                if (bits.isNotEmpty || hdr != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Wrap(
+                      spacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        if (hdr != null) _SmallBadge(hdr, scheme),
+                        if (bits.isNotEmpty)
+                          Text(bits.join(' · '),
+                              style: theme.textTheme.bodySmall
+                                  ?.copyWith(color: scheme.onSurfaceVariant)),
+                      ],
+                    ),
+                  ),
+                if (tags.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(tags,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(color: scheme.primary)),
+                  ),
+              ]),
+            ),
+            if (item.favorite)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Icon(Icons.favorite, size: 18, color: scheme.primary),
+              ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _SmallBadge extends StatelessWidget {
+  const _SmallBadge(this.text, this.scheme);
+  final String text;
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+        decoration: BoxDecoration(
+          color: scheme.secondaryContainer,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(text,
+            style: TextStyle(
+                fontSize: 10.5, fontWeight: FontWeight.w700, color: scheme.onSecondaryContainer)),
+      );
 }
 
 /// Pinching out stops at this many photos per row (month view starts at

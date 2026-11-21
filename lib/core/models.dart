@@ -196,7 +196,16 @@ class VaultSettings {
     this.hdrScanVersion = 0,
     this.saveFramesAsHeif = false,
     this.startFolderId,
-  });
+    ViewPrefs? defaultView,
+    Map<String, ViewPrefs>? folderViews,
+  })  : defaultView = defaultView ?? ViewPrefs(columns: gridColumns),
+        folderViews = folderViews ?? {};
+
+  /// How the gallery looks when a folder has no view of its own.
+  ViewPrefs defaultView;
+
+  /// Folder id → that folder's own view (set by changing the view inside it).
+  Map<String, ViewPrefs> folderViews;
 
   /// How long the app may be in the background before it locks.
   /// 0 = lock immediately.
@@ -246,6 +255,9 @@ class VaultSettings {
         'hdrScan': hdrScanVersion,
         'frameHeif': saveFramesAsHeif,
         if (startFolderId != null) 'startFolder': startFolderId,
+        'view': defaultView.toJson(),
+        if (folderViews.isNotEmpty)
+          'folderViews': {for (final e in folderViews.entries) e.key: e.value.toJson()},
       };
 
   factory VaultSettings.fromJson(Map<String, dynamic>? j) => VaultSettings(
@@ -262,6 +274,15 @@ class VaultSettings {
         hdrScanVersion: (j?['hdrScan'] as int?) ?? 0,
         saveFramesAsHeif: (j?['frameHeif'] as bool?) ?? false,
         startFolderId: j?['startFolder'] as String?,
+        defaultView: j?['view'] is Map
+            ? ViewPrefs.fromJson((j!['view'] as Map).cast<String, dynamic>())
+            : null,
+        folderViews: {
+          if (j?['folderViews'] is Map)
+            for (final e in (j!['folderViews'] as Map).entries)
+              if (e.value is Map)
+                e.key as String: ViewPrefs.fromJson((e.value as Map).cast<String, dynamic>()),
+        },
       );
 }
 
@@ -316,5 +337,58 @@ class LibraryData {
         ],
         settings: VaultSettings.fromJson(
             (j['settings'] as Map?)?.cast<String, dynamic>()),
+      );
+}
+
+
+// ------------------------------------------------------------- gallery view
+
+enum ViewMode { grid, details }
+
+/// Details that can be shown in the gallery.
+enum ViewField {
+  name('File name'),
+  length('Length'),
+  fps('Frame rate'),
+  tags('Tags'),
+  size('File size'),
+  date('Date taken'),
+  hdr('HDR badge');
+
+  const ViewField(this.label);
+  final String label;
+}
+
+/// How the gallery is laid out: grid or details list, how many per row,
+/// and which details are shown.
+class ViewPrefs {
+  ViewPrefs({this.mode = ViewMode.grid, int columns = 4, Set<ViewField>? show})
+      : columns = columns.clamp(1, 6),
+        show = show ?? {ViewField.length, ViewField.fps, ViewField.hdr};
+
+  ViewMode mode;
+  int columns;
+  Set<ViewField> show;
+
+  bool shows(ViewField f) => show.contains(f);
+
+  ViewPrefs copy() => ViewPrefs(mode: mode, columns: columns, show: {...show});
+
+  Map<String, dynamic> toJson() => {
+        'mode': mode.name,
+        'cols': columns,
+        'show': [for (final f in show) f.name],
+      };
+
+  factory ViewPrefs.fromJson(Map<String, dynamic> j) => ViewPrefs(
+        mode: j['mode'] == 'details' ? ViewMode.details : ViewMode.grid,
+        columns: (j['cols'] as int?) ?? 4,
+        show: j['show'] is List
+            ? {
+                for (final n in j['show'] as List)
+                  for (final f in ViewField.values)
+                    if (f.name == n) f
+              }
+            : null,
       );
 }

@@ -440,6 +440,7 @@ class Vault {
       if (i.folderId == folderId) i.folderId = f.parentId;
     }
     data.folders.remove(f);
+    data.settings.folderViews.remove(folderId);
   }
 
   Tag createTag(String name, {int? color}) {
