@@ -101,6 +101,16 @@ void main() {
         hdr: HdrFormat.hlg,
         tagIds: {tag.id},
       ));
+      v.data.items.add(MediaItem(
+        id: 'b',
+        blobId: 'none',
+        name: 'Voice memo.m4a',
+        kind: MediaKind.audio,
+        mimeType: 'audio/mp4',
+        sizeBytes: 1000,
+        addedAt: DateTime(2026, 3, 3),
+        durationMs: 5000,
+      ));
       v.data.settings.defaultView =
           ViewPrefs(mode: ViewMode.details, show: {...ViewField.values});
       await v.save();
@@ -135,6 +145,19 @@ void main() {
     await tester.runAsync(() => app.updateView((x) => x.show.remove(ViewField.length)));
     await tester.pump();
     expect(find.text('1:15'), findsNothing);
+
+    // Audio always shows its name: zoomed out, and with "File name" off.
+    await tester.runAsync(() => app.updateView((x) {
+          x.columns = 6;
+          x.show.remove(ViewField.name);
+        }));
+    await tester.pump();
+    expect(find.text('Voice memo.m4a'), findsOneWidget);
+    expect(find.text('Sunset walk.mp4'), findsNothing);
+    await tester.runAsync(() => app.updateView((x) => x.mode = ViewMode.details));
+    await tester.pump();
+    expect(find.text('Voice memo.m4a'), findsOneWidget);
+    expect(find.text('Sunset walk.mp4'), findsNothing);
 
     await tester.runAsync(() => app.lock());
     await tester.pumpWidget(const SizedBox());

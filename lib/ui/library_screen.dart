@@ -477,15 +477,20 @@ class _Tile extends StatelessWidget {
     final small = view.columns >= kMonthGridColumns;
     // Room for text on the thumbnail only when zoomed in far enough.
     final roomy = view.columns <= kTextOnTilesColumns;
-    final isFileTile = item.kind == MediaKind.file && item.thumbId == null;
-    final name = roomy && view.shows(ViewField.name) && !isFileTile ? item.name : null;
+    final isAudio = item.kind == MediaKind.audio;
+    // Files and audio without a picture get an icon tile with the name on it.
+    final isFileTile = (item.kind == MediaKind.file || isAudio) && item.thumbId == null;
+    // Audio has nothing to recognise it by but its name, so always show it.
+    final name = isFileTile
+        ? null
+        : (isAudio || (roomy && view.shows(ViewField.name)) ? item.name : null);
     final tags = roomy && view.shows(ViewField.tags) ? _tagText(item, app.tagsById) : '';
     final bits = roomy ? _detailBits(item, view) : const <String>[];
     final hasText = name != null || tags.isNotEmpty || bits.isNotEmpty;
 
     final hdr = view.shows(ViewField.hdr) ? _hdrBadge(item) : null;
     final fps = view.shows(ViewField.fps) && item.isHighFrameRate;
-    final badges = <Widget>[
+    final badges = small ? const <Widget>[] : <Widget>[
       if (hdr != null) Badge2(hdr),
       if (hdr != null && fps) const SizedBox(width: 3),
       if (fps) Badge2('${item.fps!.round()}'),
@@ -506,7 +511,9 @@ class _Tile extends StatelessWidget {
             borderRadius: BorderRadius.circular(selected ? 10 : 0),
             child: Hero(
               tag: 'media-${item.id}',
-              child: isFileTile ? _FileTile(item: item, small: small) : MediaThumb(item),
+              child: isFileTile
+                  ? _FileTile(item: item, small: small, alwaysName: isAudio)
+                  : MediaThumb(item),
             ),
           ),
         ),
@@ -536,14 +543,16 @@ class _Tile extends StatelessWidget {
               ),
             ]),
           ),
-        if (!small && hasText)
+        if (hasText && (!small || name != null))
           // Name, details and tags on a dark fade at the bottom.
           Positioned(
             left: selected ? 10 : 0,
             right: selected ? 10 : 0,
             bottom: selected ? 10 : 0,
             child: Container(
-              padding: const EdgeInsets.fromLTRB(6, 18, 6, 5),
+              padding: small
+                  ? const EdgeInsets.fromLTRB(3, 10, 3, 2)
+                  : const EdgeInsets.fromLTRB(6, 18, 6, 5),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
@@ -563,9 +572,10 @@ class _Tile extends StatelessWidget {
                   ),
                 if (name != null)
                   Text(name,
-                      maxLines: 1,
+                      maxLines: small || isAudio ? 2 : 1,
                       overflow: TextOverflow.ellipsis,
-                      style: white.copyWith(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                      style: white.copyWith(
+                          fontSize: small ? 9.5 : 12.5, fontWeight: FontWeight.w600)),
                 if (bits.isNotEmpty)
                   Text(bits.join(' · '),
                       maxLines: 1,
@@ -618,7 +628,8 @@ class _DetailRow extends StatelessWidget {
     final tags = view.shows(ViewField.tags) ? _tagText(item, app.tagsById) : '';
     final bits = _detailBits(item, view, withMedia: true);
     final hdr = view.shows(ViewField.hdr) ? _hdrBadge(item) : null;
-    final isFileTile = item.kind == MediaKind.file && item.thumbId == null;
+    final isFileTile =
+        (item.kind == MediaKind.file || item.kind == MediaKind.audio) && item.thumbId == null;
 
     return Material(
       color: selected ? scheme.primaryContainer.withValues(alpha: 0.6) : Colors.transparent,
@@ -666,7 +677,7 @@ class _DetailRow extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                if (view.shows(ViewField.name))
+                if (view.shows(ViewField.name) || item.kind == MediaKind.audio)
                   Text(item.name,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -735,29 +746,44 @@ const _tileShadow = [Shadow(blurRadius: 4, color: Colors.black54)];
 
 /// Grid tile for a document without a picture: type icon, extension, name.
 class _FileTile extends StatelessWidget {
-  const _FileTile({required this.item, required this.small});
+  const _FileTile({required this.item, required this.small, this.alwaysName = false});
   final MediaItem item;
   final bool small;
+
+  /// Show the name even on small tiles (audio: the name is all there is).
+  final bool alwaysName;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
       color: scheme.surfaceContainerHighest,
-      padding: const EdgeInsets.all(6),
+      // Audio tiles: keep clear of the length shown in the top corner.
+      padding: alwaysName
+          ? EdgeInsets.fromLTRB(4, small ? 18 : 26, 4, 4)
+          : const EdgeInsets.all(6),
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(itemIcon(item), size: small ? 22 : 36, color: scheme.primary),
-        if (item.extension.isNotEmpty)
+        Icon(itemIcon(item),
+            size: alwaysName ? (small ? 16 : 26) : (small ? 22 : 36), color: scheme.primary),
+        if (item.extension.isNotEmpty && !(small && alwaysName))
           Text(item.extension.toUpperCase(),
               style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: scheme.primary)),
-        if (!small) ...[
-          const SizedBox(height: 4),
-          Text(
-            item.name,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+        if (!small || alwaysName) ...[
+          SizedBox(height: small ? 2 : 4),
+          Flexible(
+            child: Text(
+              item.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: alwaysName
+                  ? TextStyle(
+                      fontSize: small ? 9.5 : 11.5,
+                      height: 1.15,
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurface)
+                  : TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+            ),
           ),
         ],
       ]),
