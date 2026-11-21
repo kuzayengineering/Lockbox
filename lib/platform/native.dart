@@ -7,6 +7,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
+import '../core/embedded_tags.dart';
+
 /// A file the user picked to import.
 class PickedFile {
   PickedFile(
@@ -309,10 +311,13 @@ class Native {
     required String kind,
     String? relativePath,
     String? folder,
+    List<FilePatch> patches = const [],
   }) async {
+    final edits = [for (final p in patches) p.toMap()];
     if (folder != null) {
       await _ch.invokeMethod('writeToFolder', {
         'tree': folder, 'blob': blobPath, 'key': key, 'name': name, 'mime': mime,
+        'patches': edits,
       });
       return folderLabel(folder);
     }
@@ -323,6 +328,7 @@ class Native {
       'mime': mime,
       'kind': kind,
       'relativePath': relativePath ?? defaultRelativePath(kind),
+      'patches': edits,
     });
     return used ?? relativePath ?? '';
   }

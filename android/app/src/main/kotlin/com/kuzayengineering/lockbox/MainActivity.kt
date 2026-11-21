@@ -249,7 +249,41 @@ class MainActivity : FlutterActivity() {
         return { FileInputStream(src) }
     }
 
-    private fun restoreToMediaStore(input: () -> InputStream, name: String, mime: String, kind: String, relativePath: String): String {
+    /** An edit made while writing a restored file (tags kept in its metadata). */
+    private class FilePatch(val start: Long, val end: Long, val bytes: ByteArray)
+
+    private fun patchesFor(call: MethodCall): List<FilePatch> =
+        (call.argument<List<Map<String, Any>>>("patches") ?: emptyList()).map {
+            FilePatch((it["start"] as Number).toLong(), (it["end"] as Number).toLong(), it["bytes"] as ByteArray)
+        }
+
+    /** Copies [input] to [out], applying [patches] (sorted, not overlapping). */
+    private fun copyPatched(input: InputStream, out: java.io.OutputStream, patches: List<FilePatch>) {
+        val buf = ByteArray(1 shl 20)
+        var pos = 0L
+        fun pass(count: Long, write: Boolean) {
+            var left = count
+            while (left > 0) {
+                val n = input.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
+                if (n < 0) throw java.io.EOFException("File ended early")
+                if (write) out.write(buf, 0, n)
+                left -= n
+            }
+        }
+        for (p in patches) {
+            pass(p.start - pos, true)
+            out.write(p.bytes)
+            pass(p.end - p.start, false)
+            pos = p.end
+        }
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            out.write(buf, 0, n)
+        }
+    }
+
+    private fun restoreToMediaStore(input: () -> InputStream, name: String, mime: String, kind: String, relativePath: String, patches: List<FilePatch>): String {
         val volume = MediaStore.VOLUME_EXTERNAL_PRIMARY
         val primary = when (kind) {
             "photo" -> MediaStore.Images.Media.getContentUri(volume)
@@ -275,7 +309,7 @@ class MainActivity : FlutterActivity() {
                 }
                 item = contentResolver.insert(collection, values) ?: continue
                 contentResolver.openOutputStream(item)!!.use { out ->
-                    input().use { it.copyTo(out, 1 shl 20) }
+                    input().use { copyPatched(it, out, patches) }
                 }
                 contentResolver.update(item, ContentValues().apply {
                     put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -559,7 +593,8 @@ class MainActivity : FlutterActivity() {
                 val mime = call.argument<String>("mime") ?: "application/octet-stream"
                 val kind = call.argument<String>("kind") ?: "other"
                 val rel = call.argument<String>("relativePath")!!
-                background(result) { restoreToMediaStore(input, name, mime, kind, rel) }
+                val patches = patchesFor(call)
+                background(result) { restoreToMediaStore(input, name, mime, kind, rel, patches) }
             }
 
             "writeToFolder" -> {
@@ -567,12 +602,13 @@ class MainActivity : FlutterActivity() {
                 val input = inputFor(call)
                 val name = call.argument<String>("name")!!
                 val mime = call.argument<String>("mime") ?: "application/octet-stream"
+                val patches = patchesFor(call)
                 background(result) {
                     val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
                     val doc = DocumentsContract.createDocument(contentResolver, parent, mime, name)
                         ?: throw IllegalStateException("Could not create $name")
                     contentResolver.openOutputStream(doc)!!.use { out ->
-                        input().use { it.copyTo(out, 1 shl 20) }
+                        input().use { copyPatched(it, out, patches) }
                     }
                     true
                 }

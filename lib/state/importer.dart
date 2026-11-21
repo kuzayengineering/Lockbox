@@ -12,6 +12,7 @@ import 'package:image/image.dart' as img;
 import 'package:pdfrx/pdfrx.dart';
 
 import '../core/crypto.dart';
+import '../core/embedded_tags.dart';
 import '../core/models.dart';
 import '../core/mp4_probe.dart';
 import '../core/ultra_hdr.dart';
@@ -222,6 +223,10 @@ class Importer {
       final stored = MediaItem.fromJson({...item.toJson(), 'blob': blobId});
       if (thumb != null) stored.thumbId = await vault.storeThumbnail(thumb);
       if (_autoTag) vault.autoTag(stored);
+      // Tags kept in the file itself (e.g. written when it was restored).
+      for (final t in await _embeddedTags(opened.path)) {
+        stored.tagIds.add(vault.tagNamed(t).id);
+      }
       vault.data.items.add(stored);
 
       // ---- original
@@ -237,6 +242,24 @@ class Importer {
   }
 }
 
+
+/// Keywords stored in the file's own metadata (XMP), if any.
+Future<List<String>> _embeddedTags(String path) async {
+  RandomAccessFile? f;
+  try {
+    f = await File(path).open();
+    final file = f;
+    final length = await file.length();
+    return await readEmbeddedTags(length, (a, b) async {
+      await file.setPosition(a);
+      return file.read(b - a);
+    });
+  } catch (_) {
+    return const [];
+  } finally {
+    await f?.close();
+  }
+}
 
 DateTime? _parseAndroidDate(String? s) {
   // e.g. "20230704T120000.000Z"

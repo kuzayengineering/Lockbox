@@ -196,6 +196,7 @@ class VaultSettings {
     this.hdrScanVersion = 0,
     this.saveFramesAsHeif = false,
     this.startFolderId,
+    this.tagsInFiles = true,
     ViewPrefs? defaultView,
     Map<String, ViewPrefs>? folderViews,
   })  : defaultView = defaultView ?? ViewPrefs(columns: gridColumns),
@@ -241,6 +242,10 @@ class VaultSettings {
   /// Folder shown first after unlocking (null = Library).
   String? startFolderId;
 
+  /// Write a file's tags into its own metadata when restoring it (photos
+  /// and videos), so they come back if the file is added again.
+  bool tagsInFiles;
+
   Map<String, dynamic> toJson() => {
         'autoLock': autoLockSeconds,
         'cols': gridColumns,
@@ -255,6 +260,7 @@ class VaultSettings {
         'hdrScan': hdrScanVersion,
         'frameHeif': saveFramesAsHeif,
         if (startFolderId != null) 'startFolder': startFolderId,
+        'tagsInFiles': tagsInFiles,
         'view': defaultView.toJson(),
         if (folderViews.isNotEmpty)
           'folderViews': {for (final e in folderViews.entries) e.key: e.value.toJson()},
@@ -274,6 +280,7 @@ class VaultSettings {
         hdrScanVersion: (j?['hdrScan'] as int?) ?? 0,
         saveFramesAsHeif: (j?['frameHeif'] as bool?) ?? false,
         startFolderId: j?['startFolder'] as String?,
+        tagsInFiles: (j?['tagsInFiles'] as bool?) ?? true,
         defaultView: j?['view'] is Map
             ? ViewPrefs.fromJson((j!['view'] as Map).cast<String, dynamic>())
             : null,

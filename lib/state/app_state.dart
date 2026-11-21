@@ -13,8 +13,10 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../core/backup.dart';
+import '../core/blob_format.dart' show BlobReader;
 import '../core/compress_estimate.dart';
 import '../core/crypto.dart' show randomId;
+import '../core/embedded_tags.dart';
 import '../core/mp4_probe.dart';
 import '../core/library_query.dart';
 import '../core/media_server.dart';
@@ -644,9 +646,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         case RestoreDestination.chooseFolder:
           folder = chosen;
       }
+      final patches = await _tagPatches(item);
       final key = await vault.fileKeyFor(item);
       try {
         return await external(() => Native.restoreFromVaultAndroid(
+              patches: patches,
               blobPath: vault.blobPath(item.blobId),
               key: key,
               name: item.name,
@@ -669,8 +673,27 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       RestoreDestination.chooseFolder => chosen!,
     };
     await Directory(dir).create(recursive: true);
-    await vault.exportItem(item, Native.uniquePath(dir, item.name));
+    await vault.exportItem(item, Native.uniquePath(dir, item.name),
+        patches: await _tagPatches(item));
     return dir;
+  }
+
+  /// Edits that write the item's tags into the restored file's metadata
+  /// (JPEG, MP4, MOV, HEIC…). None for other files, when turned off in
+  /// Settings, or if the file can't be read.
+  Future<List<FilePatch>> _tagPatches(MediaItem item) async {
+    if (!settings.tagsInFiles) return const [];
+    final tags = tagsById;
+    final names = [for (final id in item.tagIds) if (tags[id] != null) tags[id]!.name];
+    BlobReader? r;
+    try {
+      r = await vault.openOriginal(item);
+      return await planTagPatches(r.length, r.read, names) ?? const [];
+    } catch (_) {
+      return const [];
+    } finally {
+      await r?.close();
+    }
   }
 
   Future<bool> chooseDefaultRestoreFolder() async {

@@ -34,6 +34,7 @@ import 'package:path/path.dart' as p;
 import 'auto_tag.dart';
 import 'blob_format.dart';
 import 'crypto.dart';
+import 'embedded_tags.dart';
 import 'models.dart';
 import 'ultra_hdr.dart';
 
@@ -374,13 +375,14 @@ class Vault {
       readBlobFileKey(blobPath(item.blobId), masterKey);
 
   /// Writes a decrypted copy of [item] to [destPath].
-  Future<void> exportItem(MediaItem item, String destPath) {
+  Future<void> exportItem(MediaItem item, String destPath,
+      {List<FilePatch> patches = const []}) {
     final src = blobPath(item.blobId);
     final keyBytes = Uint8List.fromList(masterKey.bytes);
     return Isolate.run(() async {
       final k = await AesKey.fromBytes(keyBytes);
       try {
-        await decryptBlobToFile(src, destPath, k);
+        await decryptBlobToFile(src, destPath, k, patches: patches);
       } finally {
         k.wipe();
       }

@@ -69,6 +69,13 @@ there are no accounts or cloud servers.
   folder you choose. You can keep a copy in Lockbox or remove it.
 - On Android, restoring decrypts straight into the destination, so no
   temporary unencrypted copy is ever written.
+- **Tags travel with photos and videos.** When a JPEG, HEIC, MP4 or MOV is
+  restored, its tags are written into the file as standard XMP keywords (the
+  same place Windows and Lightroom keep keywords). Adding the file back to
+  Lockbox later brings its tags back, whatever the file is called. Other apps
+  can read these keywords; turn this off in *Settings › Keep tags in restored
+  photos and videos*. The video and picture data are not changed: video tags
+  are added at the end of the file, and Ultra HDR photos keep their HDR data.
 
 **Backup**
 - *Settings › Back up vault to a file* writes the whole vault as one

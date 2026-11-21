@@ -39,6 +39,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'crypto.dart';
+import 'embedded_tags.dart';
 
 const List<int> kBlobMagic = [0x4C, 0x42, 0x58, 0x31]; // "LBX1"
 const int kBlobVersion = 1;
@@ -363,12 +364,13 @@ Future<void> decryptBlobToFile(
   String destPath,
   AesKey masterKey, {
   void Function(int bytesDone)? onProgress,
+  List<FilePatch> patches = const [],
 }) async {
   final r = await BlobReader.open(blobPath, masterKey);
   final sink = File(destPath).openWrite();
   var done = 0;
   try {
-    await for (final part in r.stream()) {
+    await for (final part in patchedStream(patches, (a, b) => r.stream(a, b))) {
       sink.add(part);
       done += part.length;
       onProgress?.call(done);

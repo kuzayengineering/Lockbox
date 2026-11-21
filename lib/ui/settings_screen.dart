@@ -95,6 +95,14 @@ class SettingsScreen extends StatelessWidget {
               onTap: app.chooseDefaultRestoreFolder,
             ),
             SwitchListTile(
+              secondary: const Icon(Icons.sell_outlined),
+              title: const Text('Keep tags in restored photos and videos'),
+              subtitle: const Text('Writes the tags into the file (JPEG, HEIC, MP4, MOV) so they '
+                  'come back if you add it to Lockbox again. Other apps can see these tags.'),
+              value: s.tagsInFiles,
+              onChanged: (v) => app.updateSettings((x) => x.tagsInFiles = v),
+            ),
+            SwitchListTile(
               secondary: const Icon(Icons.copy_all_outlined),
               title: const Text('Keep a copy in Lockbox when restoring'),
               subtitle: const Text('Default choice in the restore dialog'),
