@@ -50,6 +50,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   AppState() {
     WidgetsBinding.instance.addObserver(this);
     Native.onPaused = _leftScreen;
+    Native.onLeft = () {
+      if (isUnlocked) lock();
+    };
   }
 
   Phase phase = Phase.loading;
@@ -172,6 +175,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _thumbLoads.clear();
     selection.clear();
     _results = null;
+    // Keep anything added so far (e.g. an import that was interrupted).
+    try {
+      await v.save();
+    } catch (_) {}
     await v.lock();
     phase = Phase.locked;
     notifyListeners();
@@ -192,14 +199,17 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   int _externalActivity = 0;
 
-  /// Runs [action] (e.g. a system file picker) without locking while the
-  /// other screen is open.
+  /// Runs [action] (e.g. a system file picker, or an import) without
+  /// locking just because another screen opened on top of Lockbox. Leaving
+  /// for real while it runs (Home, Recents, another app, screen off) still
+  /// locks at once: Android watches for that (Native.onLeft). Callers must
+  /// check [isUnlocked] afterwards.
   Future<T> external<T>(Future<T> Function() action) async {
-    _externalActivity++;
+    if (_externalActivity++ == 0) await Native.watchLeaving(true);
     try {
       return await action();
     } finally {
-      _externalActivity--;
+      if (--_externalActivity == 0) await Native.watchLeaving(false);
     }
   }
 
@@ -607,12 +617,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     String? chosen;
     if (dest == RestoreDestination.chooseFolder) {
       chosen = await external(() => Native.pickFolder(title: 'Restore to…'));
-      if (chosen == null) return r..cancelled = true;
+      if (chosen == null || !isUnlocked) return r..cancelled = true;
     }
     final done = <String>[];
     task.value = TaskProgress('Restoring…', total: items.length);
     try {
       for (var n = 0; n < items.length; n++) {
+        if (!isUnlocked) break; // left Lockbox: stop
         final item = items[n];
         task.value = TaskProgress('Restoring ${item.name}', done: n, total: items.length);
         try {
@@ -624,7 +635,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           r.failures[item.name] = e.toString();
         }
       }
-      if (!keepCopy && done.isNotEmpty) await deleteItems(done);
+      if (!keepCopy && done.isNotEmpty && isUnlocked) await deleteItems(done);
     } finally {
       task.value = null;
     }
@@ -699,7 +710,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Future<bool> chooseDefaultRestoreFolder() async {
     final f = await external(
         () => Native.pickFolder(title: 'Default restore folder', persist: true));
-    if (f == null) return false;
+    if (f == null || !isUnlocked) return false;
     settings
       ..restoreFolder = f
       ..restoreFolderLabel = Native.folderLabel(f);
@@ -724,6 +735,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final dest = await external(
         () => Native.createForWrite(name, 'application/octet-stream'));
     if (dest == null) return false;
+    if (!isUnlocked) {
+      await Native.close(dest);
+      return false;
+    }
     await vault.save();
     task.value = const TaskProgress('Backing up…');
     try {

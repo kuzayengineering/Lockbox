@@ -1,8 +1,12 @@
 package com.kuzayengineering.lockbox
 
 import android.app.Activity
+import android.app.ActivityManager
+import android.content.BroadcastReceiver
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -88,6 +92,84 @@ class MainActivity : FlutterActivity() {
         nativeChannel?.invokeMethod("paused", null)
     }
 
+    // ------------------------------------------------ leaving while away
+    //
+    // While a system screen is open on top of Lockbox (file picker, folder
+    // picker, "save as"), Lockbox is already paused, so onPause can't tell
+    // when the person leaves *that* screen for Home, Recents or another app.
+    // While Dart asks us to watch, any of these signals means "left":
+    //  * Lockbox's task is no longer visible (checked twice a second),
+    //  * the screen turns off,
+    //  * the system reports the Home or Recents button.
+
+    private var watching = false
+    private var leftReported = false
+
+    private val leaveReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> reportLeft()
+                @Suppress("DEPRECATION")
+                Intent.ACTION_CLOSE_SYSTEM_DIALOGS -> {
+                    val reason = intent.getStringExtra("reason") ?: return
+                    // "homekey", "recentapps", gesture navigation…, but not
+                    // e.g. the notification shade or a phone call.
+                    if (reason != "globalactions" && reason != "dream" && reason != "call") reportLeft()
+                }
+            }
+        }
+    }
+
+    private val visibilityCheck = object : Runnable {
+        override fun run() {
+            if (!watching) return
+            if (taskVisible() == false) reportLeft() else main.postDelayed(this, 500)
+        }
+    }
+
+    /** Whether Lockbox's task is on screen; null if the phone can't say. */
+    private fun taskVisible(): Boolean? = try {
+        val am = getSystemService(ActivityManager::class.java)
+        val info = am.appTasks.firstOrNull()?.taskInfo ?: return null
+        // TaskInfo.isVisible() exists from Android 12 (looked up so older
+        // phones simply skip this check).
+        info.javaClass.getMethod("isVisible").invoke(info) as? Boolean
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun reportLeft() {
+        if (!watching || leftReported) return
+        leftReported = true
+        stopWatching()
+        nativeChannel?.invokeMethod("left", null)
+    }
+
+    private fun startWatching() {
+        if (watching) return
+        watching = true
+        leftReported = false
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            @Suppress("DEPRECATION")
+            addAction(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(leaveReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(leaveReceiver, filter)
+        }
+        main.postDelayed(visibilityCheck, 500)
+    }
+
+    private fun stopWatching() {
+        if (!watching) return
+        watching = false
+        main.removeCallbacks(visibilityCheck)
+        try { unregisterReceiver(leaveReceiver) } catch (_: Exception) {}
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
@@ -109,6 +191,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        stopWatching()
         compressor?.cancel()
         player?.release()
         imports.values.forEach { closeHandle(it, false) }
@@ -370,6 +453,10 @@ class MainActivity : FlutterActivity() {
 
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "watchLeaving" -> {
+                if (call.arguments == true) startWatching() else stopWatching()
+                result.success(null)
+            }
             // "Save frame": full-resolution still from an encrypted video.
             // Video gestures: media volume and screen brightness (0..1).
             "getMediaVolume" -> {

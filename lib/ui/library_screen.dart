@@ -280,7 +280,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _import() async {
     final files = await app.external(Native.pickMedia);
-    if (files.isEmpty || !mounted) return;
+    // Left Lockbox while picking: it locked, and the choice is dropped.
+    if (files.isEmpty || !mounted || !app.isUnlocked) return;
     var delete = app.settings.deleteOriginalsOnImport;
     var autoTag = app.settings.autoTagFromNames;
     final go = await showDialog<bool>(

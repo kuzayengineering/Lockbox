@@ -102,6 +102,7 @@ class Importer {
     _autoTag = autoTag;
     final result = ImportResult();
     for (var n = 0; n < files.length; n++) {
+      if (vault.isLocked) break; // Lockbox locked part-way: stop
       final f = files[n];
       onProgress?.call(n, files.length, f.name);
       try {
@@ -110,9 +111,9 @@ class Importer {
       } catch (e) {
         result.failures[f.name] = e.toString();
       }
-      if (n % 10 == 9) await vault.save();
+      if (n % 10 == 9 && !vault.isLocked) await vault.save();
     }
-    await vault.save();
+    if (!vault.isLocked) await vault.save();
     onProgress?.call(files.length, files.length, '');
     return result;
   }
@@ -230,6 +231,16 @@ class Importer {
       vault.data.items.add(stored);
 
       // ---- original
+      // Only delete the original once its protected copy is safely saved.
+      // If Lockbox locked meanwhile, lock() saved the library already
+      // (or this item was added after it): keep the original to be safe.
+      if (vault.isLocked) {
+        closed = true;
+        await Native.close(opened);
+        if (deleteOriginal) result.originalsKept++;
+        return true;
+      }
+      if (deleteOriginal) await vault.save();
       closed = true;
       final deleted = await Native.close(opened, deleteOriginal: deleteOriginal);
       if (deleteOriginal) {

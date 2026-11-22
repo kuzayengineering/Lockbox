@@ -4,6 +4,7 @@
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
@@ -52,11 +53,29 @@ class Native {
     if (isAndroid) {
       _ch.setMethodCallHandler((call) async {
         if (call.method == 'paused') _onPaused?.call();
+        if (call.method == 'left') _onLeft?.call();
       });
     }
   }
 
   static void Function()? _onPaused;
+
+  /// Called when the person leaves Lockbox while a system screen (file
+  /// picker…) is open on top of it: Home, Recents, another app, screen off.
+  static set onLeft(void Function()? f) => _onLeft = f;
+  static void Function()? _onLeft;
+
+  /// Tests: behave as if Android reported that the person left.
+  @visibleForTesting
+  static void simulateLeft() => _onLeft?.call();
+
+  /// Android: start/stop watching for [onLeft].
+  static Future<void> watchLeaving(bool on) async {
+    if (!isAndroid) return;
+    try {
+      await _ch.invokeMethod('watchLeaving', on);
+    } catch (_) {}
+  }
 
   // ---- "Make smaller copy" (Android)
   static const _compress = MethodChannel('lockbox/compress');
