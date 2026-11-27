@@ -485,3 +485,59 @@ class TaskBanner extends StatelessWidget {
     );
   }
 }
+
+/// Windows: "a new version is available" with Install / Later.
+class UpdateBanner extends StatelessWidget {
+  const UpdateBanner({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.read<AppState>();
+    return ValueListenableBuilder<UpdateState?>(
+      valueListenable: app.update,
+      builder: (context, u, _) {
+        if (u == null) return const SizedBox.shrink();
+        final scheme = Theme.of(context).colorScheme;
+        final busy = u.progress != null && u.error == null;
+        return Material(
+          color: scheme.tertiaryContainer,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(Icons.system_update_alt, color: scheme.onTertiaryContainer),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    u.error ??
+                        (busy
+                            ? 'Downloading Lockbox ${u.info.version}…'
+                            : 'Lockbox ${u.info.version} is available'),
+                    style: TextStyle(color: scheme.onTertiaryContainer),
+                  ),
+                ),
+                if (!busy) ...[
+                  TextButton(
+                    onPressed: () => app.update.value = null,
+                    child: const Text('Later'),
+                  ),
+                  FilledButton(
+                    onPressed: app.installUpdate,
+                    child: Text(u.error == null ? 'Install' : 'Try again'),
+                  ),
+                ],
+              ]),
+              if (busy) ...[
+                const SizedBox(height: 6),
+                LinearProgressIndicator(value: u.progress),
+                const SizedBox(height: 4),
+                Text('Lockbox will close, update and open again.',
+                    style: TextStyle(fontSize: 12, color: scheme.onTertiaryContainer)),
+              ],
+            ]),
+          ),
+        );
+      },
+    );
+  }
+}

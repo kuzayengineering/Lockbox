@@ -6,7 +6,9 @@
 #
 # Windows is built only on request, to save GitHub Actions minutes (Windows
 # minutes count double): put "[windows]" in the commit message, or start the
-# workflow by hand (Actions > Build > Run workflow).
+# workflow by hand (Actions > Build > Run workflow). The Windows build makes
+# an installer (installer/lockbox.iss, Inno Setup) and a zip; the Windows app
+# updates itself from the installer of the newest release that has one.
 #
 # Android signing: add two repository secrets (Settings > Secrets and
 # variables > Actions):
@@ -129,11 +131,19 @@ jobs:
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath Lockbox-windows.zip
+      - name: Installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc "/DAppVersion=$env:VERSION" installer\lockbox.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item build\installer\Lockbox-windows-setup.exe .
       - name: Upload to release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "v$VERSION" Lockbox-windows.zip --clobber
+        run: gh release upload "v$VERSION" Lockbox-windows-setup.exe Lockbox-windows.zip --clobber
 
   release:
     needs: [test, android, windows]

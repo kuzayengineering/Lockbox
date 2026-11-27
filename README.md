@@ -55,6 +55,8 @@ there are no accounts or cloud servers.
 - **Save frame**: pause a video and tap the camera button. The frame is saved
   as a photo in the *Screenshots* folder inside Lockbox, dated like the source
   video and given the same tags.
+- Windows: drag files or whole folders from Explorer onto Lockbox to add
+  them (same as the Add button).
 - Windows keyboard shortcuts: ← → next/previous item, Space play/pause,
   `,` `.` previous/next frame, F favourite, Esc close.
 
@@ -98,7 +100,21 @@ page. The five newest are kept:
 
 - `Lockbox-android.apk`: install on the phone (allow "install unknown apps"
   for your browser or file manager when asked).
-- `Lockbox-windows.zip`: unzip anywhere and run `lockbox.exe`.
+- `Lockbox-windows-setup.exe`: the Windows installer. Run it; it installs
+  Lockbox for your Windows user (no administrator rights needed) with a Start
+  menu shortcut and an uninstaller. Windows may show "Windows protected your
+  PC" because the installer isn't code-signed: choose *More info › Run
+  anyway*. Installing, updating or uninstalling never touches your vault.
+- `Lockbox-windows.zip`: the same program without an installer; unzip
+  anywhere and run `lockbox.exe`.
+
+### Automatic updates on Windows
+
+Each time it starts, the Windows version asks GitHub whether a newer
+version exists (nothing about you or your files is sent). If there is one,
+a banner offers **Install**: Lockbox downloads the installer, checks it
+against the fingerprint GitHub publishes, closes, updates and reopens. Turn
+this off in *Settings › Check for updates when Lockbox starts*.
 
 ### Automatic updates on Android (Obtainium)
 

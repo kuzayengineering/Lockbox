@@ -1,8 +1,12 @@
 #include "flutter_window.h"
 
+#include <flutter/standard_method_codec.h>
+#include <shellapi.h>
+
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "utils.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -26,6 +30,12 @@ bool FlutterWindow::OnCreate() {
   }
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
+
+  // Drag and drop from Explorer: same as the Add button.
+  drop_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "lockbox/drop",
+      &flutter::StandardMethodCodec::GetInstance());
+  DragAcceptFiles(GetHandle(), TRUE);
 
   // Lockbox content must never appear in screenshots, screen recordings or
   // screen sharing. WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+) hides the
@@ -69,6 +79,24 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_DROPFILES: {
+      HDROP drop = reinterpret_cast<HDROP>(wparam);
+      const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+      flutter::EncodableList paths;
+      for (UINT i = 0; i < count; i++) {
+        const UINT len = DragQueryFileW(drop, i, nullptr, 0);
+        std::wstring path(len + 1, L'\0');
+        DragQueryFileW(drop, i, path.data(), len + 1);
+        path.resize(len);
+        paths.push_back(flutter::EncodableValue(Utf8FromUtf16(path.c_str())));
+      }
+      DragFinish(drop);
+      if (drop_channel_ && !paths.empty()) {
+        drop_channel_->InvokeMethod(
+            "dropped", std::make_unique<flutter::EncodableValue>(std::move(paths)));
+      }
+      return 0;
+    }
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;

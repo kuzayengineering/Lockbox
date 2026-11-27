@@ -17,6 +17,7 @@ import '../core/blob_format.dart' show BlobReader;
 import '../core/compress_estimate.dart';
 import '../core/crypto.dart' show randomId;
 import '../core/embedded_tags.dart';
+import '../core/updater.dart';
 import '../core/mp4_probe.dart';
 import '../core/library_query.dart';
 import '../core/media_server.dart';
@@ -73,6 +74,15 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Future<File> get _configFile async =>
       File(p.join((await getApplicationSupportDirectory()).path, 'config.json'));
 
+  /// Windows: small unencrypted settings file (vault folder, update check).
+  Map<String, dynamic> _config = {};
+
+  Future<void> _saveConfig() async {
+    final cfg = await _configFile;
+    await cfg.parent.create(recursive: true);
+    await cfg.writeAsString(jsonEncode(_config));
+  }
+
   Future<void> init() async {
     if (Native.isAndroid) {
       vaultDir = p.join((await getApplicationSupportDirectory()).path, 'vault');
@@ -80,8 +90,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       try {
         final cfg = await _configFile;
         if (cfg.existsSync()) {
-          vaultDir = (jsonDecode(await cfg.readAsString()) as Map)['vaultDir']
-              as String?;
+          _config = (jsonDecode(await cfg.readAsString()) as Map).cast<String, dynamic>();
+          vaultDir = _config['vaultDir'] as String?;
         }
       } catch (_) {}
     }
@@ -89,6 +99,58 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         ? Phase.locked
         : Phase.setup;
     notifyListeners();
+    if (canUpdate && checkUpdatesOnStart) unawaited(checkForUpdates());
+  }
+
+  // ----------------------------------------------------------- updates
+  //
+  // Windows only (Android updates come through Obtainium; the Android app
+  // has no internet access at all).
+
+  static const appVersion = String.fromEnvironment('LOCKBOX_VERSION');
+
+  /// This copy can update itself (Windows release builds).
+  bool get canUpdate => Platform.isWindows && appVersion.isNotEmpty;
+
+  bool get checkUpdatesOnStart => (_config['checkUpdates'] as bool?) ?? true;
+
+  Future<void> setCheckUpdatesOnStart(bool on) async {
+    _config['checkUpdates'] = on;
+    await _saveConfig();
+    notifyListeners();
+  }
+
+  /// Update status shown in the update banner.
+  final update = ValueNotifier<UpdateState?>(null);
+
+  /// Looks for a newer Windows version. Returns a message for "Check now".
+  Future<String> checkForUpdates() async {
+    if (!canUpdate) return 'Updates are only checked in Windows release builds.';
+    try {
+      final u = await checkForUpdate(appVersion);
+      if (u == null) return 'Lockbox $appVersion is the newest version.';
+      update.value = UpdateState(u);
+      return 'Lockbox ${u.version} is available.';
+    } catch (_) {
+      return 'Couldn\'t reach GitHub to check for updates.';
+    }
+  }
+
+  /// Downloads and starts the installer, then closes Lockbox (it reopens
+  /// when the update is installed).
+  Future<void> installUpdate() async {
+    final s = update.value;
+    if (s == null || s.progress != null) return;
+    update.value = UpdateState(s.info, progress: 0);
+    try {
+      final path = await downloadUpdate(s.info,
+          onProgress: (f) => update.value = UpdateState(s.info, progress: f));
+      await lock();
+      await runInstaller(path);
+      exit(0);
+    } catch (e) {
+      update.value = UpdateState(s.info, error: e is UpdateCheckFailed ? e.message : 'Download failed.');
+    }
   }
 
   /// Suggested vault location on Windows.
@@ -103,9 +165,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _rememberVaultDir(String dir) async {
     vaultDir = dir;
     if (Native.isAndroid) return;
-    final cfg = await _configFile;
-    await cfg.parent.create(recursive: true);
-    await cfg.writeAsString(jsonEncode({'vaultDir': dir}));
+    _config['vaultDir'] = dir;
+    await _saveConfig();
   }
 
   /// Windows: switch to a different existing vault folder.
@@ -391,7 +452,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
             files,
             deleteOriginals: deleteOriginals,
             autoTag: autoTag ?? settings.autoTagFromNames,
-            folderId: query.folderId,
+            folderId: showingFolders ? null : query.folderId,
             onProgress: (d, t, name) {
               task.value = TaskProgress('Encrypting $name', done: d, total: t);
               changed(save: false); // show items as they arrive
@@ -865,4 +926,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
+}
+
+class UpdateState {
+  UpdateState(this.info, {this.progress, this.error});
+  final UpdateInfo info;
+
+  /// 0..1 while downloading.
+  final double? progress;
+  final String? error;
 }

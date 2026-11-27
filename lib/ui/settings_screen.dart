@@ -25,6 +25,7 @@ class SettingsScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: Column(children: [
+        const UpdateBanner(),
         const TaskBanner(),
         Expanded(
           child: ListView(children: [
@@ -172,6 +173,24 @@ class SettingsScreen extends StatelessWidget {
               title: Text('Version'),
               subtitle: Text(String.fromEnvironment('LOCKBOX_VERSION', defaultValue: 'development build')),
             ),
+            if (!Native.isAndroid) ...[
+              SwitchListTile(
+                secondary: const Icon(Icons.system_update_alt),
+                title: const Text('Check for updates when Lockbox starts'),
+                subtitle: const Text('Asks GitHub for the newest version. '
+                    'Nothing about you or your files is sent.'),
+                value: app.checkUpdatesOnStart,
+                onChanged: app.setCheckUpdatesOnStart,
+              ),
+              ListTile(
+                leading: const Icon(Icons.refresh),
+                title: const Text('Check for updates now'),
+                onTap: () async {
+                  final msg = await app.checkForUpdates();
+                  if (context.mounted) snack(context, msg);
+                },
+              ),
+            ],
             const ListTile(
               leading: Icon(Icons.shield_outlined),
               title: Text('How your files are protected'),

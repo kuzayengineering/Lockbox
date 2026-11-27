@@ -33,6 +33,33 @@ class _LibraryScreenState extends State<LibraryScreen> {
   AppState get app => context.read<AppState>();
 
   @override
+  void initState() {
+    super.initState();
+    // Windows: files dragged in from Explorer are added like the Add button.
+    Native.onDropped = _onDropped;
+  }
+
+  @override
+  void dispose() {
+    Native.onDropped = null;
+    super.dispose();
+  }
+
+  void _onDropped(List<String> paths) {
+    if (!mounted || !app.isUnlocked) return;
+    if (app.task.value != null) {
+      snack(context, 'Wait for the current task to finish, then drop the files again.');
+      return;
+    }
+    final files = Native.pickedFromPaths(paths);
+    if (files.isEmpty) {
+      snack(context, 'Nothing to add there.');
+      return;
+    }
+    _import(files);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     if (!app.isUnlocked) return const SizedBox.shrink();
@@ -50,7 +77,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
           icon: const Icon(Icons.create_new_folder_outlined),
           label: const Text('New folder'),
         ),
-        body: const Column(children: [TaskBanner(), Expanded(child: FoldersPage())]),
+        body: const Column(
+            children: [UpdateBanner(), TaskBanner(), Expanded(child: FoldersPage())]),
       );
       if (!wide) return page;
       return Row(children: [
@@ -73,6 +101,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               label: const Text('Add'),
             ),
       body: Column(children: [
+        const UpdateBanner(),
         const TaskBanner(),
         _FilterChips(query: app.query),
         Expanded(
@@ -326,6 +355,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             filtered
                 ? 'Try removing some filters.'
                 : 'Tap “Add” to move photos, videos, audio and any other files into Lockbox. '
+                    '${Native.isAndroid ? '' : 'You can also drag files here from Explorer. '}'
                     'They are encrypted on this device.',
             textAlign: TextAlign.center,
           ),
@@ -340,8 +370,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  Future<void> _import() async {
-    final files = await app.external(Native.pickMedia);
+  /// Adds files: [dropped] ones, or else those chosen in the file picker.
+  Future<void> _import([List<PickedFile>? dropped]) async {
+    final List<PickedFile> files =
+        dropped ?? await app.external<List<PickedFile>>(Native.pickMedia);
     // Left Lockbox while picking: it locked, and the choice is dropped.
     if (files.isEmpty || !mounted || !app.isUnlocked) return;
     var delete = app.settings.deleteOriginalsOnImport;

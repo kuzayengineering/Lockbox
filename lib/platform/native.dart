@@ -192,6 +192,57 @@ class Native {
     ];
   }
 
+  // ---- Windows: drag and drop from Explorer
+  static const _drop = MethodChannel('lockbox/drop');
+
+  /// Called with the paths of files and folders dropped on the window.
+  static set onDropped(void Function(List<String> paths)? f) {
+    if (!Platform.isWindows) return;
+    _drop.setMethodCallHandler(f == null
+        ? null
+        : (call) async {
+            if (call.method == 'dropped') f((call.arguments as List).cast<String>());
+          });
+  }
+
+  /// Files to add for dropped [paths]. Folders contribute every file inside
+  /// them (sub-folders too), skipping hidden and system files.
+  static List<PickedFile> pickedFromPaths(List<String> paths) {
+    final out = <PickedFile>[];
+    bool skip(String path) {
+      final n = p.basename(path).toLowerCase();
+      return n.startsWith('.') || n == 'desktop.ini' || n == 'thumbs.db';
+    }
+
+    void addFile(File f) {
+      if (skip(f.path)) return;
+      try {
+        out.add(PickedFile(
+            name: p.basename(f.path),
+            size: f.lengthSync(),
+            path: f.path,
+            originalLocation: p.dirname(f.path),
+            modified: _modified(f.path)));
+      } catch (_) {}
+    }
+
+    for (final path in paths) {
+      final type = FileSystemEntity.typeSync(path, followLinks: false);
+      if (type == FileSystemEntityType.file) {
+        addFile(File(path));
+      } else if (type == FileSystemEntityType.directory && !skip(path)) {
+        try {
+          final entries = Directory(path).listSync(recursive: true, followLinks: false)
+            ..sort((a, b) => a.path.compareTo(b.path));
+          for (final e in entries) {
+            if (e is File && !p.split(p.relative(e.path, from: path)).any(skip)) addFile(e);
+          }
+        } catch (_) {}
+      }
+    }
+    return out;
+  }
+
   /// Picks any single file (used to restore backups).
   static Future<PickedFile?> pickFile() async {
     if (isAndroid) {

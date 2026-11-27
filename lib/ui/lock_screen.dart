@@ -6,7 +6,7 @@ import 'package:provider/provider.dart';
 import '../core/vault.dart';
 import '../platform/native.dart';
 import '../state/app_state.dart';
-import 'common.dart' show TaskBanner;
+import 'common.dart' show TaskBanner, UpdateBanner;
 
 /// Unlock screen (vault exists) or first-run setup (no vault yet).
 class LockScreen extends StatefulWidget {
@@ -110,7 +110,9 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
     final strength = _strength(_pass.text);
     return Scaffold(
       body: SafeArea(
-        child: Center(
+        child: Column(children: [
+          const UpdateBanner(),
+          Expanded(child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
@@ -241,7 +243,8 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
               ),
             ),
           ),
-        ),
+        )),
+        ]),
       ),
     );
   }
