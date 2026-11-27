@@ -7,7 +7,9 @@ import '../core/models.dart';
 import '../platform/native.dart';
 import '../state/app_state.dart';
 import 'common.dart';
+import 'fast_scroller.dart';
 import 'filter_sheet.dart';
+import 'folders_page.dart';
 import 'settings_screen.dart';
 import 'view_sheet.dart';
 import 'viewer_screen.dart';
@@ -39,6 +41,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final folder = app.query.folderId == null ? null : app.foldersById[app.query.folderId];
     final items = app.results;
 
+    if (app.showingFolders) {
+      final page = Scaffold(
+        drawer: wide ? null : const Drawer(child: _Sidebar()),
+        appBar: _foldersBar(app),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () => newFolder(context, app),
+          icon: const Icon(Icons.create_new_folder_outlined),
+          label: const Text('New folder'),
+        ),
+        body: const Column(children: [TaskBanner(), Expanded(child: FoldersPage())]),
+      );
+      if (!wide) return page;
+      return Row(children: [
+        const SizedBox(width: 300, child: Material(child: _Sidebar())),
+        const VerticalDivider(width: 1),
+        Expanded(child: page),
+      ]);
+    }
+
     final scaffold = Scaffold(
       drawer: wide ? null : const Drawer(child: _Sidebar()),
       appBar: selecting ? _selectionBar(app) : _normalBar(app, folder),
@@ -65,13 +86,44 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       ]),
     );
-    if (!wide) return scaffold;
-    return Row(children: [
-      const SizedBox(width: 300, child: Material(child: _Sidebar())),
-      const VerticalDivider(width: 1),
-      Expanded(child: scaffold),
-    ]);
+    // Back from a folder opened on the Folders page returns there.
+    final backToFolders = app.openedFromFolders && folder != null && !selecting;
+    final screen = !wide
+        ? scaffold
+        : Row(children: [
+            const SizedBox(width: 300, child: Material(child: _Sidebar())),
+            const VerticalDivider(width: 1),
+            Expanded(child: scaffold),
+          ]);
+    return PopScope(
+      canPop: !backToFolders,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && backToFolders) app.showFolders();
+      },
+      child: screen,
+    );
   }
+
+  PreferredSizeWidget _foldersBar(AppState app) => AppBar(
+        title: const Text('Folders'),
+        actions: [
+          PopupMenuButton<String>(
+            onSelected: (v) {
+              switch (v) {
+                case 'settings':
+                  Navigator.push(
+                      context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+                case 'lock':
+                  app.lock();
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'settings', child: Text('Settings')),
+              PopupMenuItem(value: 'lock', child: Text('Lock now')),
+            ],
+          ),
+        ],
+      );
 
   // ----------------------------------------------------------- pinch zoom
 
@@ -113,7 +165,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   PreferredSizeWidget _normalBar(AppState app, Folder? folder) {
     final q = app.query;
+    final back = app.openedFromFolders && folder != null;
     return AppBar(
+      leading: back
+          ? IconButton(
+              tooltip: 'Folders',
+              icon: const Icon(Icons.arrow_back),
+              onPressed: app.showFolders,
+            )
+          : null,
       title: _searching
           ? TextField(
               controller: _search,
@@ -394,8 +454,38 @@ class _Grid extends StatelessWidget {
       sections.add((null, [for (var i = 0; i < items.length; i++) i]));
     }
     final gap = columns >= kMonthGridColumns ? 1.0 : 2.0;
-    return Scrollbar(
-      child: CustomScrollView(
+    final theme = Theme.of(context);
+    return LayoutBuilder(builder: (context, box) {
+      // Where each date heading starts, for the fast scroller's bubble.
+      final starts = <(double, String)>[];
+      if (sections.first.$1 != null) {
+        final tp = TextPainter(
+            text: TextSpan(text: 'Ag', style: theme.textTheme.titleSmall),
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context))
+          ..layout();
+        final header = 18 + 8 + tp.height;
+        final tile = details ? 86.0 : (box.maxWidth - gap * (columns - 1)) / columns;
+        var y = 0.0;
+        for (final (label, idx) in sections) {
+          starts.add((y, label!));
+          final rows = details ? idx.length : (idx.length / columns).ceil();
+          y += header + rows * tile + (details ? 0 : (rows - 1) * gap);
+        }
+      }
+      String? labelFor(double offset) {
+        String? hit;
+        for (final (y, label) in starts) {
+          if (y > offset + 1) break;
+          hit = label;
+        }
+        return hit;
+      }
+
+      return FastScroller(
+      labelFor: starts.isEmpty ? null : labelFor,
+      builder: (context, controller) => CustomScrollView(
+        controller: controller,
         slivers: [
           for (final (label, idx) in sections) ...[
             if (label != null)
@@ -426,6 +516,7 @@ class _Grid extends StatelessWidget {
         ],
       ),
     );
+    });
   }
 
   static String _dayLabel(DateTime d) {
@@ -885,8 +976,21 @@ class _Sidebar extends StatelessWidget {
         _NavTile(
           icon: Icons.photo_library_outlined,
           label: 'Library',
-          selected: q.folderId == null && !q.favoritesOnly && q.kinds.isEmpty && q.tagIds.isEmpty,
+          selected: !app.showingFolders &&
+              q.folderId == null &&
+              !q.favoritesOnly &&
+              q.kinds.isEmpty &&
+              q.tagIds.isEmpty,
           onTap: () => go(LibraryQuery(sort: q.sort, descending: q.descending)),
+        ),
+        _NavTile(
+          icon: Icons.folder_copy_outlined,
+          label: 'Folders',
+          selected: app.showingFolders,
+          onTap: () {
+            app.showFolders();
+            if (inDrawer) Navigator.of(context).maybePop();
+          },
         ),
         _NavTile(
           icon: Icons.favorite_border,
@@ -930,7 +1034,7 @@ class _Sidebar extends StatelessWidget {
             icon: Icons.folder_outlined,
             label: f.name,
             indent: depth,
-            selected: q.folderId == f.id,
+            selected: !app.showingFolders && q.folderId == f.id,
             count: data.items.where((i) => i.folderId == f.id).length,
             onTap: () => go(q.copyWith(folderId: f.id)),
             menu: _folderMenu(context, app, f),
@@ -989,33 +1093,7 @@ class _Sidebar extends StatelessWidget {
 
   Widget _folderMenu(BuildContext context, AppState app, Folder f) => PopupMenuButton<String>(
         icon: const Icon(Icons.more_vert, size: 20),
-        onSelected: (v) async {
-          switch (v) {
-            case 'rename':
-              final name = await promptText(context, title: 'Rename folder', initial: f.name, ok: 'Rename');
-              if (name != null && name.isNotEmpty) {
-                f.name = name;
-                await app.changed();
-              }
-            case 'sub':
-              final name = await promptText(context, title: 'New folder inside ${f.name}', ok: 'Create');
-              if (name != null && name.isNotEmpty) {
-                app.vault.createFolder(name, parentId: f.id);
-                await app.changed();
-              }
-            case 'delete':
-              if (!context.mounted) return;
-              final ok = await confirm(context,
-                  title: 'Delete folder “${f.name}”?',
-                  message: 'Its files and sub-folders are kept and move up one level.',
-                  ok: 'Delete folder');
-              if (ok) {
-                if (app.query.folderId == f.id) app.setQuery(app.query.copyWith(folderId: f.parentId));
-                app.vault.deleteFolder(f.id);
-                await app.changed();
-              }
-          }
-        },
+        onSelected: (v) => folderAction(context, app, f, v),
         itemBuilder: (_) => const [
           PopupMenuItem(value: 'rename', child: Text('Rename')),
           PopupMenuItem(value: 'sub', child: Text('New folder inside')),

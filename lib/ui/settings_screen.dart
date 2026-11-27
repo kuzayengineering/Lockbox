@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/models.dart' show kStartFoldersPage;
 import '../platform/native.dart';
 import '../state/app_state.dart';
 import 'common.dart';
@@ -33,7 +34,8 @@ class SettingsScreen extends StatelessWidget {
               title: const Text('Start screen'),
               subtitle: Text(_startLabel(app)),
               onTap: () async {
-                final (ok, id) = await pickFolder(context, title: 'Open after unlocking');
+                final (ok, id) = await pickFolder(context,
+                    title: 'Open after unlocking', offerFoldersPage: true);
                 if (ok) await app.updateSettings((x) => x.startFolderId = id);
               },
             ),
@@ -189,6 +191,7 @@ class SettingsScreen extends StatelessWidget {
   static String _startLabel(AppState app) {
     final id = app.settings.startFolderId;
     if (id == null) return 'Library';
+    if (id == kStartFoldersPage) return 'Folders page';
     final f = app.foldersById[id];
     return f == null ? 'Library (the chosen folder was deleted)' : 'Folder: ${f.name}';
   }

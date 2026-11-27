@@ -153,10 +153,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _server = await MediaServer.start(v.directory, v.masterKey.bytes);
     }
     selection.clear();
-    // Start screen: Library, or the folder chosen in Settings (if it still exists).
+    // Start screen: Library, the Folders page, or the folder chosen in
+    // Settings (if it still exists).
     final start = v.data.settings.startFolderId;
     final startExists = start != null && v.data.folders.any((f) => f.id == start);
     query = LibraryQuery(sort: SortField.dateTaken, folderId: startExists ? start : null);
+    showingFolders = start == kStartFoldersPage;
+    openedFromFolders = false;
     _invalidate();
     phase = Phase.unlocked;
     notifyListeners();
@@ -248,7 +251,28 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   void _invalidate() => _results = null;
 
+  /// The Folders page (a grid of all folders) is showing instead of files.
+  bool showingFolders = false;
+
+  /// The open folder was opened from the Folders page (back returns there).
+  bool openedFromFolders = false;
+
+  void showFolders() {
+    showingFolders = true;
+    openedFromFolders = false;
+    selection.clear();
+    notifyListeners();
+  }
+
+  /// Opens [folderId] from the Folders page.
+  void openFolderFromFolders(String folderId) {
+    setQuery(LibraryQuery(sort: query.sort, descending: query.descending, folderId: folderId));
+    openedFromFolders = true;
+  }
+
   void setQuery(LibraryQuery q) {
+    if (q.folderId != query.folderId) openedFromFolders = false;
+    showingFolders = false;
     query = q;
     _invalidate();
     notifyListeners();

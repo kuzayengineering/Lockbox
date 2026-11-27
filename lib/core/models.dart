@@ -181,6 +181,9 @@ class Tag {
 }
 
 /// User preferences stored inside the encrypted index.
+/// [VaultSettings.startFolderId] value meaning "open the Folders page".
+const kStartFoldersPage = '@folders';
+
 class VaultSettings {
   VaultSettings({
     this.autoLockSeconds = 30,
@@ -239,7 +242,8 @@ class VaultSettings {
   /// Save frames of HDR videos as 10-bit HDR HEIF instead of JPEG.
   bool saveFramesAsHeif;
 
-  /// Folder shown first after unlocking (null = Library).
+  /// Folder shown first after unlocking (null = Library,
+  /// [kStartFoldersPage] = the Folders page).
   String? startFolderId;
 
   /// Write a file's tags into its own metadata when restoring it (photos

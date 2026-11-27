@@ -30,6 +30,11 @@ there are no accounts or cloud servers.
   HDR/HLG/Dolby Vision, 60 fps or more, length, file size, and date range.
 - Search across names, tags and notes.
 - Photo grid grouped by day or month. Pinch to change the grid size.
+- **Folders page**: all your folders as a grid of square covers (the newest
+  photo or video in each). It can be the first screen after unlocking
+  (*Settings › Start screen*).
+- Long lists get a Google Photos–style handle on the right while scrolling:
+  drag it to jump through the list, with a bubble showing the date.
 - **View** button: Grid or Details (thumbnail with name, tags and details
   beside it), and choose what's shown: file name, length, frame rate, tags,
   file size, date taken, HDR badge. In the grid, names and tags appear on the

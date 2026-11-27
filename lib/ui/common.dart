@@ -304,7 +304,10 @@ Future<void> editTags(BuildContext context, List<MediaItem> items) async {
 }
 
 /// Picks a folder (or the top level). Returns false if cancelled.
-Future<(bool, String?)> pickFolder(BuildContext context, {String title = 'Move to'}) async {
+/// Picks a folder: (picked?, folder id or null for Library). With
+/// [offerFoldersPage], the Folders page is a choice too ([kStartFoldersPage]).
+Future<(bool, String?)> pickFolder(BuildContext context,
+    {String title = 'Move to', bool offerFoldersPage = false}) async {
   final app = context.read<AppState>();
   final r = await showModalBottomSheet<(bool, String?)>(
     context: context,
@@ -319,9 +322,16 @@ Future<(bool, String?)> pickFolder(BuildContext context, {String title = 'Move t
             ListTile(title: Text(title, style: Theme.of(ctx).textTheme.titleLarge)),
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Library (no folder)'),
+              title: Text(offerFoldersPage ? 'Library' : 'Library (no folder)'),
               onTap: () => Navigator.pop(ctx, (true, null)),
             ),
+            if (offerFoldersPage)
+              ListTile(
+                leading: const Icon(Icons.folder_copy_outlined),
+                title: const Text('Folders page'),
+                subtitle: const Text('All your folders as a grid'),
+                onTap: () => Navigator.pop(ctx, (true, kStartFoldersPage)),
+              ),
             for (final (f, depth) in rows)
               ListTile(
                 contentPadding: EdgeInsets.only(left: 16.0 + depth * 20, right: 16),
