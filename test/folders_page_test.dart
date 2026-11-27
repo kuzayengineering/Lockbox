@@ -80,6 +80,29 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('handle stops above the navigation buttons; Add is on the left', (tester) async {
+    // Phone with a 48-point navigation bar at the bottom.
+    tester.view.padding = FakeViewPadding(bottom: 48 * tester.view.devicePixelRatio);
+    addTearDown(tester.view.reset);
+    late AppState app;
+    await tester.runAsync(() async => app = await vaultWith(800));
+    await show(tester, app);
+    final screen = tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -150));
+    await tester.pump();
+    final handle = find.byKey(const ValueKey('fast-scroll-handle'));
+    await tester.drag(handle, const Offset(0, 5000)); // all the way down
+    await tester.pump();
+    expect(tester.getRect(handle).bottom, lessThanOrEqualTo(screen - 48));
+
+    final add = tester.getRect(find.byType(FloatingActionButton));
+    expect(add.center.dx, lessThan(tester.view.physicalSize.width / tester.view.devicePixelRatio / 2));
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.runAsync(() => app.lock());
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('fast scroller appears only on long lists', (tester) async {
     final handle = find.byKey(const ValueKey('fast-scroll-handle'));
     for (final (count, expectHandle) in [(12, false), (800, true)]) {

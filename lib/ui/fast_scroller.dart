@@ -60,7 +60,12 @@ class _FastScrollerState extends State<FastScroller> {
     });
   }
 
-  double _track(double viewport) => (viewport - _thumbHeight).clamp(1.0, double.infinity);
+  /// Space at the bottom kept clear of the phone's navigation buttons
+  /// (the list itself runs underneath them).
+  double _bottomInset = 0;
+
+  double _track(double viewport) =>
+      (viewport - _thumbHeight - _bottomInset).clamp(1.0, double.infinity);
 
   double _thumbTop(double viewport) {
     if (_dragging) return _dragTop;
@@ -81,6 +86,7 @@ class _FastScrollerState extends State<FastScroller> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    _bottomInset = MediaQuery.paddingOf(context).bottom + 8;
     return LayoutBuilder(builder: (context, box) {
       final viewport = box.maxHeight;
       return Stack(children: [

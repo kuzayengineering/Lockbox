@@ -63,6 +63,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final scaffold = Scaffold(
       drawer: wide ? null : const Drawer(child: _Sidebar()),
       appBar: selecting ? _selectionBar(app) : _normalBar(app, folder),
+      // Bottom left, clear of the scroll handle on the right.
+      floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
       floatingActionButton: selecting
           ? null
           : FloatingActionButton.extended(
